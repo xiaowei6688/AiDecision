@@ -1,14 +1,4 @@
-"""Agent 中间件：把压缩后的 summary 回灌进每次模型调用的上下文。
-
-ContextCompressor 会把旧消息从 messages 中删除并合并进 state 的 `summary` 字段，
-但 `summary` 只是一个 state 字段，不会自动进入模型上下文。若不回灌，压缩等同于
-静默丢弃历史。该中间件在每次调用模型前，将 `summary` 追加到 system message 末尾，
-使主 Agent 与子 Agent（共享同一 state）都能看到被压缩的历史。
-"""
-
 from collections.abc import Awaitable, Callable
-from typing import Any
-
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     ModelRequest,

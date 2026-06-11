@@ -47,7 +47,7 @@ async def send_session_message(
     request: ChatRequest,
     session_service: SessionService = Depends(get_session_service),
 ) -> InteractionResponse:
-    """HTTP chat endpoint that returns normal or HITL events."""
+    """返回正常或HITL事件的HTTP聊天端点."""
 
     event = await session_service.send_message_event(
         session_id=session_id,
