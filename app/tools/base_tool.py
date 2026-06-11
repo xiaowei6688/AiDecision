@@ -202,3 +202,4 @@ def _slots_from_human_resume(resume_value: Any) -> dict[str, dict[str, Any]]:
 
 
 DST_TOOLS = [update_dialogue_state, request_human_input]
+HUMAN_INPUT_TOOLS = [request_human_input]

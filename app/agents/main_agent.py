@@ -7,7 +7,7 @@ from app.agents.llm import build_chat_model
 from app.agents.middleware import SummaryInjectionMiddleware
 from app.agents.state import DecisionDSTState
 from app.agents.roles.subagents import build_role_subagents
-from app.tools.tools import DST_TOOLS
+from app.tools.base_tool import DST_TOOLS
 from app.core.config import Settings
 
 """
@@ -24,6 +24,16 @@ MAIN_AGENT_PROMPT = """你是企业级 AI 决策系统的主 Agent，也是对�
 5. 涉及安全、隐私、成本、不可逆操作时，委派给 risk_reviewer，必要时请求人工确认。
 6. 方案确认后，委派给 execution_planner 输出执行步骤。
 7. 回复用户时使用清楚、简洁、容易理解的中文。
+
+委派给 SubAgent 时（调用 task 工具），description 必须自包含：
+- SubAgent 是无状态的，每次都是全新启动，看不到本次对话历史，也不记得之前任何一次
+  SubAgent 跑过什么。它只能看到你写的 description，加上系统注入的已压缩 summary。
+- 因此 description 必须包含 SubAgent 完成任务所需的全部背景：用户的原始目标、已确认的
+  关键事实（slots）、之前相关结论、以及这一次具体要它做什么、期望输出什么格式。
+- 特别是人工交互（HITL）被取消又恢复、或用户中途补充新信息后：不要只把“新增内容”塞进
+  description。必须把新信息与之前的上下文重新合成为一段完整、自洽的任务说明，否则
+  SubAgent 会因为信息缺失而执行出错。
+- 绝不要假设 SubAgent “应该记得”或“会自己去查”——需要它知道的，就明确写进 description。
 
 你可以调用 update_dialogue_state 写入结构化 DST，也可以调用 request_human_input
 暂停流程并等待前端/人工恢复。

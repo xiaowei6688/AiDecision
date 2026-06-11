@@ -5,11 +5,18 @@
 from deepagents import SubAgent
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from app.tools.tools import DST_TOOLS
+from app.agents.middleware import SummaryInjectionMiddleware
+from app.tools.base_tool import HUMAN_INPUT_TOOLS
 
 
 def build_role_subagents(model: BaseChatModel) -> list[SubAgent]:
-    """构建主编排器使用的企业角色代理."""
+    """构建主编排器使用的企业角色代理.
+
+    每个角色 Agent 都挂上 SummaryInjectionMiddleware，确保主对话被压缩进
+    state["summary"] 后，子 Agent 仍能在 system message 中看到这段历史。
+    子 Agent 启动时 messages 会被替换成单条任务指令（deepagents 的 task 工具
+    行为），若不注入 summary，压缩后的历史对子 Agent 不可见，导致信息缺失。
+    """
 
     return [
         {
@@ -21,8 +28,9 @@ def build_role_subagents(model: BaseChatModel) -> list[SubAgent]:
                 "每次分析后调用 update_dialogue_state 更新 intent、slots、summary。"
                 "如果关键决策缺失，调用 request_human_input 请求人工确认。"
             ),
-            "tools": DST_TOOLS,
+            "tools": HUMAN_INPUT_TOOLS,
             "model": model,
+            "middleware": [SummaryInjectionMiddleware()],
         },
         {
             "name": "decision_strategist",
@@ -32,8 +40,9 @@ def build_role_subagents(model: BaseChatModel) -> list[SubAgent]:
                 "优先给出简单、可执行、可验证的建议。"
                 "需要保留对话状态时调用 update_dialogue_state。"
             ),
-            "tools": DST_TOOLS,
+            "tools": HUMAN_INPUT_TOOLS,
             "model": model,
+            "middleware": [SummaryInjectionMiddleware()],
         },
         {
             "name": "risk_reviewer",
@@ -43,8 +52,9 @@ def build_role_subagents(model: BaseChatModel) -> list[SubAgent]:
                 "可靠性、成本、合规和可运维风险。遇到高风险动作必须调用 "
                 "request_human_input 等待人工确认。"
             ),
-            "tools": DST_TOOLS,
+            "tools": HUMAN_INPUT_TOOLS,
             "model": model,
+            "middleware": [SummaryInjectionMiddleware()],
         },
         {
             "name": "execution_planner",
@@ -53,7 +63,8 @@ def build_role_subagents(model: BaseChatModel) -> list[SubAgent]:
                 "你是执行规划 Agent。你的职责是把确认后的方案拆成步骤、接口、"
                 "数据结构和验收检查。输出要简洁、明确、可执行。"
             ),
-            "tools": DST_TOOLS,
+            "tools": HUMAN_INPUT_TOOLS,
             "model": model,
+            "middleware": [SummaryInjectionMiddleware()],
         },
     ]
