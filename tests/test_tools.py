@@ -1,8 +1,13 @@
-from app.tools.tools import (
+from app.tools.base_tool import (
     _format_human_resume_for_tool,
     _slots_from_human_resume,
     _summary_from_human_resume,
 )
+from app.tools.dynamic_tools import build_agent_tools
+
+
+class _FakeModel:
+    """占位模型，仅用于构建动态工具，不触发 LLM 调用。"""
 
 
 def test_format_human_resume_for_tool_includes_user_content() -> None:
@@ -43,3 +48,11 @@ def test_slots_from_human_resume_includes_response_and_data() -> None:
     assert slots["last_human_action"]["value"] == "clarify"
     assert slots["last_human_response"]["value"] == "会议主题是 Q3 产品规划。"
     assert slots["human_resume_duration_minutes"]["value"] == 60
+
+
+def test_dynamic_tools_include_domain_expert_consultation() -> None:
+    tools = build_agent_tools(_FakeModel())
+
+    names = {getattr(item, "name", "") for item in tools}
+
+    assert "consult_domain_expert" in names

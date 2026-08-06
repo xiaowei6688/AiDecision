@@ -1,0 +1,62 @@
+import pytest
+
+from app.actions.bootstrap import bootstrap_actions
+from app.actions.executor import default_action_executor
+from app.actions.registry import default_action_registry
+from app.actions.schemas import ActionExecutionContext
+from app.adapters.text_to_sql import TextToSqlClient
+
+
+def test_default_actions_are_registered() -> None:
+    bootstrap_actions()
+
+    actions = default_action_registry.search("采购滤芯")
+
+    assert any(action.action_id == "erp.create_purchase_request" for action in actions)
+
+
+@pytest.mark.asyncio
+async def test_business_action_requires_confirmation() -> None:
+    bootstrap_actions()
+
+    result = await default_action_executor.execute(
+        action_id="inspection.create_task",
+        params={
+            "device_id": "D100",
+            "assignee_id": "E100",
+            "due_time": "2026-08-07 09:00",
+        },
+        context=ActionExecutionContext(user_id="tester"),
+    )
+
+    assert result.status == "requires_confirmation"
+    assert result.action_id == "inspection.create_task"
+
+
+@pytest.mark.asyncio
+async def test_business_action_executes_after_confirmation() -> None:
+    bootstrap_actions()
+
+    result = await default_action_executor.execute(
+        action_id="erp.create_purchase_request",
+        params={
+            "material_id": "M100",
+            "quantity": 3,
+            "reason": "备件不足",
+        },
+        context=ActionExecutionContext(user_id="tester"),
+        confirmed=True,
+    )
+
+    assert result.status == "success"
+    assert result.data["request_id"] == "ERP-DEMO-001"
+
+
+def test_text_to_sql_client_reports_missing_configuration() -> None:
+    result = TextToSqlClient(base_url=None).query(
+        datasource="erp",
+        question="查询滤芯库存",
+    )
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "TEXT_TO_SQL_NOT_CONFIGURED"

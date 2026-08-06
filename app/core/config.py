@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     openai_timeout_seconds: float = Field(default=60.0, gt=0.0)
     allowed_origins: list[str] = Field(default_factory=lambda: ["*"])
 
+    text_to_sql_base_url: str | None = Field(
+        default=None,
+        description="External text-to-sql service base URL.",
+    )
+    text_to_sql_timeout_seconds: float = Field(default=30.0, gt=0.0)
+
     context_recent_messages: int = Field(
         default=20,
         ge=4,

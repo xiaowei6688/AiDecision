@@ -5,10 +5,20 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.types import Command, interrupt
 
+from app.actions.bootstrap import bootstrap_actions
+from app.actions.executor import default_action_executor
+from app.actions.registry import default_action_registry
+from app.actions.schemas import ActionExecutionContext, ActionResult
 from app.agents.state import DialogueStage, HumanActionStatus
+from app.adapters.text_to_sql import TextToSqlClient
+from app.core.config import get_settings
 
 
 DEFAULT_HUMAN_ACTIONS = ["approve", "reject", "edit", "clarify"]
+
+
+def _ensure_business_runtime() -> None:
+    bootstrap_actions()
 
 
 @tool
@@ -126,6 +136,82 @@ def build_human_action(
     }
 
 
+@tool
+def list_business_actions(query: str = "", limit: int = 8) -> dict[str, Any]:
+    """列出或检索当前 Agent 可调用的业务动作目录。"""
+
+    _ensure_business_runtime()
+    actions = (
+        default_action_registry.search(query, limit=limit)
+        if query
+        else default_action_registry.list()[:limit]
+    )
+    return {
+        "status": "success",
+        "actions": [action.public_dict() for action in actions],
+    }
+
+
+@tool
+def semantic_query(
+    datasource: str,
+    question: str,
+    filters: dict[str, Any] | None = None,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """调用外部 text-to-sql 语义查询服务，查询指定 datasource 的数据。"""
+
+    settings = get_settings()
+    client = TextToSqlClient(
+        base_url=settings.text_to_sql_base_url,
+        timeout_seconds=settings.text_to_sql_timeout_seconds,
+    )
+    return client.query(
+        datasource=datasource,
+        question=question,
+        filters=filters,
+        limit=limit,
+    )
+
+
+@tool
+async def call_business_action(
+    action_id: str,
+    params: dict[str, Any],
+    confirmed: bool = False,
+    user_id: str | None = None,
+    user_roles: list[str] | None = None,
+    session_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """按统一 ActionSpec 执行业务动作，并返回标准化执行结果。"""
+
+    _ensure_business_runtime()
+    context = ActionExecutionContext(
+        user_id=user_id,
+        user_roles=user_roles or [],
+        session_id=session_id,
+        metadata=metadata or {},
+    )
+    result = await default_action_executor.execute(
+        action_id=action_id,
+        params=params,
+        context=context,
+        confirmed=confirmed,
+    )
+    return _action_result_to_dict(result)
+
+
+def _action_result_to_dict(result: ActionResult) -> dict[str, Any]:
+    return {
+        "status": result.status,
+        "action_id": result.action_id,
+        "message": result.message,
+        "data": result.data,
+        "error_code": result.error_code,
+    }
+
+
 def _format_human_resume_for_tool(resume_value: Any) -> str:
     if not isinstance(resume_value, dict):
         return f"用户已回复人工交互请求：{resume_value}"
@@ -201,5 +287,12 @@ def _slots_from_human_resume(resume_value: Any) -> dict[str, dict[str, Any]]:
     return slots
 
 
-DST_TOOLS = [update_dialogue_state, request_human_input]
+AGENT_TOOLS = [
+    update_dialogue_state,
+    request_human_input,
+    list_business_actions,
+    semantic_query,
+    call_business_action,
+]
+DST_TOOLS = AGENT_TOOLS
 HUMAN_INPUT_TOOLS = [request_human_input]

@@ -5,7 +5,9 @@
 核心能力：
 
 - 提供 HTTP 与 WebSocket 接口。
-- 主 Agent 通过 SubAgents 拆分不同角色职责。
+- 主 Agent 通过常驻通用 SubAgent 和按需领域专家拆分复杂判断。
+- 通过 ActionSpec + Executor + Adapter 接入不同业务系统，Agent 只调用统一业务动作。
+- 通过 `semantic_query` 预留 text-to-sql 查询工具，用于跨 datasource 查询、参数补全和规则校验。
 - 使用 `session_id` 作为唯一会话 ，通过 PostgreSQL checkpoint 持久化会话状态。
 - 支持人机交互（HITL）：Agent 可以暂停流程，等待前端或人工确认后恢复。
 - 扩展 `DeepAgentState`，记录意图、槽位、会话阶段、摘要、待人工动作和最近活跃 Agent。
@@ -15,6 +17,40 @@
 ```bash
 uv run uvicorn app.main:app --reload
 ```
+
+## Business Integrations
+
+通用框架放在 `app/actions` 和 `app/tools`，具体业务系统放在
+`app/integrations/<system>`。每接入一个新系统，新增一个独立目录：
+
+```text
+app/integrations/contract/
+  __init__.py
+  actions.py   # 定义 contract.xxx 业务动作
+  adapter.py   # 真正调用合同系统 HTTP/RPC/MCP
+  checks.py    # 确定性的权限、参数、业务规则校验
+```
+
+启动时由 `app/integrations/bootstrap.py` 统一注册。主 Agent 只通过
+`list_business_actions`、`semantic_query`、`call_business_action` 工作，不直接感知
+巡检、ERP、HR 或其他系统的真实接口。
+
+## Role SubAgents And Dynamic Experts
+
+角色能力按用途拆分在 `app/agents/roles`：
+
+```text
+app/agents/roles/
+  common/      # 常驻 SubAgent，如 requirements_analyst
+  domains/     # 按需领域专家提示，如 erp/hr/inspection
+```
+
+默认只注册 `requirements_analyst` 这类通用 SubAgent，避免每次对话都加载过多领域
+Agent 描述。ERP/HR/巡检领域判断通过 `consult_domain_expert` 工具按需触发，只有在
+复杂、模糊、高风险或跨系统判断时才消耗额外 token。
+
+领域专家只负责分析、澄清、建议 action_id 和参数；真实查询走 `semantic_query`，
+真实业务执行仍统一走 `call_business_action` 和 `BusinessActionExecutor`。
 
 ## WebSocket Protocol
 
