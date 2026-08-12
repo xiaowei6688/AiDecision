@@ -2,9 +2,12 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app.main import create_app
 from app.schemas.chat import HumanResumeRequest, SessionStateResponse
+from app.core.auth import AuthContext
+from app.core.session_access import SessionAccessStore
 
 
 class FakeSessionService:
@@ -76,6 +79,18 @@ def test_health_endpoint_uses_injected_service() -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_session_access_rejects_different_owner() -> None:
+    store = SessionAccessStore()
+    await store.create("s1", AuthContext(user_id="u1", tenant_id="t1"))
+    try:
+        await store.ensure_access("s1", AuthContext(user_id="u2", tenant_id="t1"))
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("different owner should be rejected")
 
 
 def test_session_state_endpoint() -> None:

@@ -5,6 +5,7 @@ from app.actions.schemas import (
     ActionInputSpec,
     ActionSpec,
 )
+from app.integrations.inspection.models import InspectionTaskCommand
 
 
 def register_actions(registry: ActionRegistry, adapter_name: str) -> None:
@@ -47,5 +48,6 @@ def register_actions(registry: ActionRegistry, adapter_name: str) -> None:
                 method="create_task",
             ),
             success_template="巡检任务已创建，任务号：{{task_id}}",
+            input_model=InspectionTaskCommand,
         )
     )

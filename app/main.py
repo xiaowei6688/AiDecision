@@ -5,9 +5,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents.main_agent import build_main_agent
+from app.actions.executor import default_action_executor
 from app.api.routes import router as http_router
 from app.api.websocket import router as websocket_router
 from app.core.checkpoint import create_postgres_checkpointer
+from app.core.durable_state import create_postgres_durable_state
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.services.context_compressor import ContextCompressor
@@ -29,6 +31,10 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         configure_logging(runtime_settings.log_level)
         app.state.settings = runtime_settings
+        default_action_executor.configure_confirmation(
+            runtime_settings.confirmation_secret.get_secret_value(),
+            runtime_settings.confirmation_ttl_seconds,
+        )
 
         if session_service is not None:
             app.state.session_service = session_service
@@ -36,15 +42,28 @@ def create_app(
             return
 
         async with create_postgres_checkpointer(runtime_settings) as checkpointer:
-            agent = build_main_agent(runtime_settings, checkpointer)
-            context_compressor = ContextCompressor(
-                recent_messages=runtime_settings.context_recent_messages,
-                summary_max_chars=runtime_settings.context_summary_max_chars,
-            )
-            app.state.session_service = SessionService(agent, context_compressor)
-            yield
+            async with create_postgres_durable_state(runtime_settings.database_url or "") as durable_state:
+                app.state.session_access = SessionAccessStore(durable_state=durable_state)
+                default_action_executor.set_durable_state(durable_state)
+                context_compressor = ContextCompressor(
+                    recent_messages=runtime_settings.context_recent_messages,
+                    summary_max_chars=runtime_settings.context_summary_max_chars,
+                )
+                agent = build_main_agent(runtime_settings, checkpointer)
+                app.state.session_service = SessionService(
+                    agent,
+                    context_compressor,
+                    runtime_context_provider=app.state.session_access.context,
+                )
+                yield
+                default_action_executor.set_durable_state(None)
 
     app = FastAPI(title=runtime_settings.app_name, lifespan=lifespan)
+    from app.core.session_access import SessionAccessStore
+    app.state.session_access = SessionAccessStore(
+        allow_unknown=runtime_settings.environment == "development"
+    )
+    app.state.settings = runtime_settings
     app.add_middleware(
         CORSMiddleware,
         allow_origins=runtime_settings.allowed_origins,

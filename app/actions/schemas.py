@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from pydantic import BaseModel
+
 
 @dataclass(frozen=True)
 class ActionInputSpec:
@@ -46,6 +48,7 @@ class ActionSpec:
     confirmation: ActionConfirmation = field(default_factory=ActionConfirmation)
     risk_level: Literal["low", "medium", "high"] = "low"
     success_template: str | None = None
+    input_model: type[BaseModel] | None = None
 
     def public_dict(self) -> dict[str, Any]:
         """Return the compact, model-facing action description."""
@@ -70,6 +73,7 @@ class ActionSpec:
             "required_roles": self.required_roles,
             "confirmation_required": self.confirmation.required,
             "risk_level": self.risk_level,
+            "input_schema": self.input_model.model_json_schema() if self.input_model else None,
         }
 
 

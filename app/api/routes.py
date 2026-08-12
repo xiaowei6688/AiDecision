@@ -1,9 +1,11 @@
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.dependencies import get_session_service, get_settings_from_app
+from app.api.dependencies import get_auth_context, get_session_access, get_session_service, get_settings_from_app
+from app.core.auth import AuthContext
+from app.core.session_access import SessionAccessStore
 from app.core.config import Settings
 from app.schemas.chat import (
     ChatRequest,
@@ -17,6 +19,13 @@ from app.services.session_service import SessionService
 router = APIRouter()
 
 
+async def _ensure_access(access: SessionAccessStore, session_id: str, auth: AuthContext) -> None:
+    try:
+        await access.ensure_access(session_id, auth)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
 @router.get("/health")
 async def health(settings: Settings = Depends(get_settings_from_app)) -> dict[str, str]:
     return {
@@ -27,17 +36,25 @@ async def health(settings: Settings = Depends(get_settings_from_app)) -> dict[st
 
 
 @router.post("/sessions", response_model=CreateSessionResponse)
-async def create_session() -> CreateSessionResponse:
+async def create_session(
+    auth: AuthContext = Depends(get_auth_context),
+    access: SessionAccessStore = Depends(get_session_access),
+) -> CreateSessionResponse:
     """为前端创建服务器拥有的会话id."""
 
-    return CreateSessionResponse(session_id=str(uuid4()))
+    session_id = str(uuid4())
+    await access.create(session_id, auth)
+    return CreateSessionResponse(session_id=session_id)
 
 
 @router.get("/sessions/{session_id}/state", response_model=SessionStateResponse)
 async def get_session_state(
     session_id: str,
     session_service: SessionService = Depends(get_session_service),
+    auth: AuthContext = Depends(get_auth_context),
+    access: SessionAccessStore = Depends(get_session_access),
 ) -> SessionStateResponse:
+    await _ensure_access(access, session_id, auth)
     return await session_service.get_state(session_id)
 
 
@@ -46,9 +63,12 @@ async def send_session_message(
     session_id: str,
     request: ChatRequest,
     session_service: SessionService = Depends(get_session_service),
+    auth: AuthContext = Depends(get_auth_context),
+    access: SessionAccessStore = Depends(get_session_access),
 ) -> InteractionResponse:
     """返回正常或HITL事件的HTTP聊天端点."""
 
+    await _ensure_access(access, session_id, auth)
     event = await session_service.send_message_event(
         session_id=session_id,
         message=request.message,
@@ -63,7 +83,10 @@ async def resume_session(
     session_id: str,
     request: HumanResumeRequest,
     session_service: SessionService = Depends(get_session_service),
+    auth: AuthContext = Depends(get_auth_context),
+    access: SessionAccessStore = Depends(get_session_access),
 ) -> InteractionResponse:
+    await _ensure_access(access, session_id, auth)
     event = await session_service.resume_event(session_id, request)
     state = await session_service.get_state(session_id)
     return InteractionResponse(event=event, state=state)

@@ -35,6 +35,33 @@ app/integrations/contract/
 `list_business_actions`、`semantic_query`、`call_business_action` 工作，不直接感知
 巡检、ERP、HR 或其他系统的真实接口。
 
+## 业务 Agent 编排
+
+系统始终由一个主编排 Agent 接待用户。ERP、HR、巡检等业务 Agent 不是用户选择的根 Agent，
+而是主 Agent 根据任务按需调度的领域能力。每个业务 Agent 声明自己的数据源、可建议的动作前缀、
+领域约束与跨系统依赖；它只输出分析和建议，真实查询及动作仍由主 Agent 经统一工具执行。
+
+```text
+用户请求
+  -> 主编排 Agent 识别涉及的业务域
+  -> consult_business_agents(["inspection", "erp", "hr"])
+  -> 汇总依赖、冲突与执行顺序
+  -> semantic_query / call_business_action
+```
+
+业务 Agent 与 Action/Adapter 同属于 `app/integrations/<system>/`：其中 `agent.py` 声明业务
+推理能力，`actions.py`、`adapter.py`、`checks.py` 负责真实受控执行。接入真实 CRM、MES 等系统时，
+新增完整 integration 包；不要把业务 Agent 做成新的用户会话根 Agent。`app/integrations/crm/`
+是仅注册分析能力、尚未连接真实系统的样例。
+
+业务语义模型不放在 Agent 协议中：跨系统引用（员工、设备、物料）在 `app/domain/models.py`，
+各系统命令模型在 `app/integrations/<system>/models.py`。ActionSpec 引用对应命令模型，
+Executor 会在调用 Adapter 前完成结构校验并把 JSON Schema 暴露给主 Agent。
+
+跨系统任务先调用 `create_execution_plan` 创建只读计划预览。计划会校验步骤唯一性、动作参数、
+已注册数据源及依赖无环，但不会查询或执行。包含写动作的计划必须先由主 Agent 通过 HITL 获得批准；
+按计划执行将在后续执行器中实现。
+
 ## Role SubAgents And Dynamic Experts
 
 角色能力按用途拆分在 `app/agents/roles`：
@@ -46,7 +73,7 @@ app/agents/roles/
 ```
 
 默认只注册 `requirements_analyst` 这类通用 SubAgent，避免每次对话都加载过多领域
-Agent 描述。ERP/HR/巡检领域判断通过 `consult_domain_expert` 工具按需触发，只有在
+Agent 描述。ERP/HR/巡检领域判断通过 `consult_business_agents` 工具按需触发，只有在
 复杂、模糊、高风险或跨系统判断时才消耗额外 token。
 
 领域专家只负责分析、澄清、建议 action_id 和参数；真实查询走 `semantic_query`，

@@ -5,6 +5,7 @@ from app.actions.schemas import (
     ActionInputSpec,
     ActionSpec,
 )
+from app.integrations.hr.models import LeaveRequestCommand
 
 
 def register_actions(registry: ActionRegistry, adapter_name: str) -> None:
@@ -51,5 +52,6 @@ def register_actions(registry: ActionRegistry, adapter_name: str) -> None:
                 method="create_leave_request",
             ),
             success_template="请假申请已创建，申请号：{{leave_id}}",
+            input_model=LeaveRequestCommand,
         )
     )

@@ -1,6 +1,8 @@
 import json
 from typing import Annotated, Any
 
+from pydantic import ValidationError
+
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.types import Command, interrupt
@@ -12,6 +14,9 @@ from app.actions.schemas import ActionExecutionContext, ActionResult
 from app.agents.state import DialogueStage, HumanActionStatus
 from app.adapters.text_to_sql import TextToSqlClient
 from app.core.config import get_settings
+from app.core.runtime_context import get_runtime_context
+from app.agents.business_bootstrap import bootstrap_business_agents
+from app.domain.plans import ExecutionPlan, validate_execution_plan
 
 
 DEFAULT_HUMAN_ACTIONS = ["approve", "reject", "edit", "clarify"]
@@ -153,6 +158,33 @@ def list_business_actions(query: str = "", limit: int = 8) -> dict[str, Any]:
 
 
 @tool
+def create_execution_plan(goal: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
+    """创建并校验跨系统执行计划；只返回预览，不会查询或执行任何业务动作。"""
+
+    _ensure_business_runtime()
+    registry = bootstrap_business_agents()
+    datasources = {
+        datasource
+        for agent in registry.list()
+        for datasource in agent.datasources
+    }
+    try:
+        plan = ExecutionPlan.model_validate({"goal": goal, "steps": steps})
+        validated = validate_execution_plan(plan, default_action_registry, datasources)
+    except (KeyError, ValueError, ValidationError) as exc:
+        return {
+            "status": "failed",
+            "error_code": "INVALID_EXECUTION_PLAN",
+            "message": str(exc),
+        }
+    return {
+        "status": "success",
+        "plan": validated.model_dump(mode="json"),
+        "requires_human_approval": any(step.kind == "action" for step in validated.steps),
+    }
+
+
+@tool
 def semantic_query(
     datasource: str,
     question: str,
@@ -178,26 +210,23 @@ def semantic_query(
 async def call_business_action(
     action_id: str,
     params: dict[str, Any],
-    confirmed: bool = False,
-    user_id: str | None = None,
-    user_roles: list[str] | None = None,
-    session_id: str | None = None,
-    metadata: dict[str, Any] | None = None,
+    confirmation_token: str | None = None,
 ) -> dict[str, Any]:
     """按统一 ActionSpec 执行业务动作，并返回标准化执行结果。"""
 
     _ensure_business_runtime()
+    runtime = get_runtime_context()
     context = ActionExecutionContext(
-        user_id=user_id,
-        user_roles=user_roles or [],
-        session_id=session_id,
-        metadata=metadata or {},
+        user_id=runtime.user_id,
+        user_roles=list(runtime.user_roles),
+        session_id=runtime.session_id,
+        metadata=runtime.metadata,
     )
     result = await default_action_executor.execute(
         action_id=action_id,
         params=params,
         context=context,
-        confirmed=confirmed,
+        confirmation_token=confirmation_token,
     )
     return _action_result_to_dict(result)
 
@@ -291,6 +320,7 @@ AGENT_TOOLS = [
     update_dialogue_state,
     request_human_input,
     list_business_actions,
+    create_execution_plan,
     semantic_query,
     call_business_action,
 ]

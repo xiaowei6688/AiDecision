@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator, Sequence
+from collections.abc import Callable
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -7,6 +8,7 @@ from langgraph.types import Command
 from app.agents.state import default_dst_metadata
 from app.services.context_compressor import ContextCompressor
 from app.schemas.chat import HumanResumeRequest, SessionStateResponse
+from app.core.runtime_context import RequestRuntimeContext, reset_runtime_context, set_runtime_context
 
 
 class SessionService:
@@ -16,9 +18,11 @@ class SessionService:
         self,
         agent: Any,
         context_compressor: ContextCompressor | None = None,
+        runtime_context_provider: Callable[[str], RequestRuntimeContext] | None = None,
     ) -> None:
         self._agent = agent
         self._context_compressor = context_compressor
+        self._runtime_context_provider = runtime_context_provider
 
     def _config(self, session_id: str) -> dict[str, Any]:
         return {"configurable": {"thread_id": session_id}}
@@ -39,7 +43,11 @@ class SessionService:
                 **(metadata or {}),
             },
         }
-        return await self._agent.ainvoke(payload, config=self._config(session_id))
+        token = set_runtime_context(self._runtime_context(session_id))
+        try:
+            return await self._agent.ainvoke(payload, config=self._config(session_id))
+        finally:
+            reset_runtime_context(token)
 
     async def send_message_event(
         self,
@@ -68,12 +76,14 @@ class SessionService:
                 **(metadata or {}),
             },
         }
-        async for event in self._agent.astream(
-            payload,
-            config=self._config(session_id),
-            stream_mode="updates",
-        ):
-            yield self._normalize_event(session_id, event)
+        token = set_runtime_context(self._runtime_context(session_id))
+        try:
+            async for event in self._agent.astream(
+                payload, config=self._config(session_id), stream_mode="updates"
+            ):
+                yield self._normalize_event(session_id, event)
+        finally:
+            reset_runtime_context(token)
 
     async def resume(
         self,
@@ -105,10 +115,22 @@ class SessionService:
             "content": request.content,
             "data": request.data,
         }
-        return await self._agent.ainvoke(
-            Command(resume=resume_payload),
-            config=self._config(session_id),
-        )
+        token = set_runtime_context(self._runtime_context(session_id))
+        try:
+            return await self._agent.ainvoke(Command(resume=resume_payload), config=self._config(session_id))
+        finally:
+            reset_runtime_context(token)
+
+    def _runtime_context(self, session_id: str) -> RequestRuntimeContext:
+        if self._runtime_context_provider is not None:
+            context = self._runtime_context_provider(session_id)
+            return RequestRuntimeContext(
+                user_id=context.user_id,
+                user_roles=context.user_roles,
+                session_id=session_id,
+                metadata=context.metadata,
+            )
+        return RequestRuntimeContext(session_id=session_id)
 
     async def get_state(self, session_id: str) -> SessionStateResponse:
         """返回最新的DST状态的紧凑可序列化视图."""

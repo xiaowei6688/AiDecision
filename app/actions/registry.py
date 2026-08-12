@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from difflib import SequenceMatcher
-from typing import Iterable
+from typing import Iterable, List
 
 from app.actions.schemas import ActionSpec
 
@@ -23,10 +23,10 @@ class ActionRegistry:
         except KeyError as exc:
             raise KeyError(f"Unknown business action: {action_id}") from exc
 
-    def list(self) -> list[ActionSpec]:
-        return list(self._actions.values())
+    def list(self) -> List[ActionSpec]:
+        return [*self._actions.values()]
 
-    def search(self, query: str, limit: int = 8) -> list[ActionSpec]:
+    def search(self, query: str, limit: int = 8) -> List[ActionSpec]:
         scored = [
             (self._score(query, action), action)
             for action in self._actions.values()

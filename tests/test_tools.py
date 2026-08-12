@@ -4,6 +4,7 @@ from app.tools.base_tool import (
     _summary_from_human_resume,
 )
 from app.tools.dynamic_tools import build_agent_tools
+from app.agents.state import merge_dict_state
 
 
 class _FakeModel:
@@ -50,9 +51,21 @@ def test_slots_from_human_resume_includes_response_and_data() -> None:
     assert slots["human_resume_duration_minutes"]["value"] == 60
 
 
-def test_dynamic_tools_include_domain_expert_consultation() -> None:
+def test_dynamic_tools_include_business_agent_consultation() -> None:
     tools = build_agent_tools(_FakeModel())
 
     names = {getattr(item, "name", "") for item in tools}
 
-    assert "consult_domain_expert" in names
+    assert "consult_business_agents" in names
+    assert "create_execution_plan" in names
+
+
+def test_dst_dict_updates_merge_without_losing_existing_facts() -> None:
+    assert merge_dict_state(
+        {"budget": {"value": "50万"}, "owner": {"value": "张三"}},
+        {"deadline": {"value": "下周五"}},
+    ) == {
+        "budget": {"value": "50万"},
+        "owner": {"value": "张三"},
+        "deadline": {"value": "下周五"},
+    }

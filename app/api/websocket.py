@@ -14,6 +14,7 @@ from app.schemas.chat import (
     WebSocketServerEvent,
 )
 from app.services.session_service import SessionService
+from app.core.auth import authenticate_websocket
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,16 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
 
 
 async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) -> None:
+    try:
+        auth = authenticate_websocket(websocket, websocket.app.state.settings)
+        access = websocket.app.state.session_access
+        if created:
+            await access.create(session_id, auth)
+        else:
+            await access.ensure_access(session_id, auth)
+    except (ValueError, PermissionError) as exc:
+        await websocket.close(code=1008, reason=str(exc))
+        return
     await websocket.accept()
     session_service: SessionService = websocket.app.state.session_service
 

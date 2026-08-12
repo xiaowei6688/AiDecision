@@ -5,6 +5,7 @@ from app.actions.schemas import (
     ActionInputSpec,
     ActionSpec,
 )
+from app.integrations.erp.models import PurchaseRequestCommand
 
 
 def register_actions(registry: ActionRegistry, adapter_name: str) -> None:
@@ -46,5 +47,6 @@ def register_actions(registry: ActionRegistry, adapter_name: str) -> None:
                 method="create_purchase_request",
             ),
             success_template="采购申请已创建，申请号：{{request_id}}",
+            input_model=PurchaseRequestCommand,
         )
     )

@@ -1,5 +1,5 @@
 from enum import StrEnum
-from typing import Any, NotRequired, TypedDict
+from typing import Annotated, Any, NotRequired, TypedDict
 
 from deepagents import DeepAgentState
 
@@ -42,6 +42,15 @@ class PendingHumanAction(TypedDict, total=False):
     payload: dict[str, Any]
 
 
+def merge_dict_state(
+    previous: dict[str, Any] | None,
+    update: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Apply a shallow patch so independent tools do not erase known facts."""
+
+    return {**(previous or {}), **(update or {})}
+
+
 class DecisionDSTState(DeepAgentState):
     """DeepAgents状态, 丰富DST字段。
         消息仍由DeepAgentState/LangGraph管理。额外的字段是
@@ -49,12 +58,12 @@ class DecisionDSTState(DeepAgentState):
     """
 
     intent: NotRequired[str | None]
-    slots: NotRequired[dict[str, DialogueSlot]]
+    slots: NotRequired[Annotated[dict[str, DialogueSlot], merge_dict_state]]
     dialogue_stage: NotRequired[DialogueStage]
     summary: NotRequired[str]
     pending_human_action: NotRequired[PendingHumanAction | None]
     last_active_agent: NotRequired[str | None]
-    metadata: NotRequired[dict[str, Any]]
+    metadata: NotRequired[Annotated[dict[str, Any], merge_dict_state]]
 
 
 def default_dst_metadata() -> dict[str, Any]:

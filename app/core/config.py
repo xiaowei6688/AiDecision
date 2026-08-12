@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     openai_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     openai_timeout_seconds: float = Field(default=60.0, gt=0.0)
     allowed_origins: list[str] = Field(default_factory=lambda: ["*"])
+    confirmation_secret: SecretStr = Field(default=SecretStr("development-confirmation-secret"))
+    confirmation_ttl_seconds: int = Field(default=600, gt=0)
 
     text_to_sql_base_url: str | None = Field(
         default=None,
