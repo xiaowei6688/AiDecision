@@ -36,4 +36,4 @@ class InspectionBundle:
         register_inspection_agents(registry)
 
 
-inspection_bundle = InspectionBundle()
+bundle = InspectionBundle()

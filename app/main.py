@@ -80,7 +80,12 @@ def create_app(
     from app.actions.policy import default_policy_engine
     from app.actions.registry import default_action_registry
 
-    for router in register_integrations(default_action_registry, default_action_executor, default_policy_engine):
+    for router in register_integrations(
+        default_action_registry,
+        default_action_executor,
+        default_policy_engine,
+        runtime_settings.enabled_integrations,
+    ):
         app.include_router(router)
     return app
 

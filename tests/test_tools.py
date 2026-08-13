@@ -7,10 +7,11 @@ from app.actions.schemas import ActionResult
 from app.tools.dynamic_tools import build_agent_tools
 from app.agents.state import merge_dict_state
 from app.integrations.projections import project_action_result
-from app.integrations.bootstrap import register_integrations
+from app.integrations.bootstrap import register_integrations, register_business_agents
 from app.actions.executor import default_action_executor
 from app.actions.policy import default_policy_engine
 from app.actions.registry import default_action_registry
+from app.agents.business_agents import BusinessAgentRegistry
 
 
 class _FakeModel:
@@ -71,6 +72,13 @@ def test_dynamic_tools_include_business_agent_consultation() -> None:
     assert "inspection_query_plan_detail" in names
     assert "inspection_query_coverage" in names
     assert "inspection_build_work_order_fill_state" in names
+
+
+def test_register_business_agents_can_be_restricted() -> None:
+    registry = BusinessAgentRegistry()
+    register_business_agents(registry, enabled_integrations=["inspection"])
+
+    assert [agent.business_id for agent in registry.list()] == ["inspection"]
 
 
 def test_dst_dict_updates_merge_without_losing_existing_facts() -> None:
