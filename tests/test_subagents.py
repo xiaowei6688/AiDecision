@@ -1,5 +1,4 @@
 from app.agents.middleware import SummaryInjectionMiddleware
-from app.agents.roles.domain_experts import get_domain_expert, list_domain_experts
 from app.agents.roles.bootstrap import build_role_subagents
 
 
@@ -39,10 +38,3 @@ def test_only_common_subagents_are_registered_by_default() -> None:
     names = {spec["name"] for spec in subagents}
 
     assert names == {"requirements_analyst"}
-
-
-def test_domain_experts_are_discoverable_for_dynamic_use() -> None:
-    experts = {item["domain"] for item in list_domain_experts()}
-
-    assert {"erp", "hr", "inspection"}.issubset(experts)
-    assert get_domain_expert("erp") is not None

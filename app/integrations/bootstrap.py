@@ -2,7 +2,6 @@ from app.actions.executor import BusinessActionExecutor
 from app.actions.policy import PolicyEngine
 from app.actions.registry import ActionRegistry
 from app.agents.business_agents import BusinessAgentRegistry
-from app.integrations import crm, erp, hr, inspection
 
 
 def register_integrations(
@@ -12,15 +11,12 @@ def register_integrations(
 ) -> None:
     """Register all enabled business system integrations."""
 
-    inspection.register(registry, executor, policy_engine)
-    erp.register(registry, executor, policy_engine)
-    hr.register(registry, executor, policy_engine)
+    # Production integrations register their own actions here.
 
 
 def register_business_agents(registry: BusinessAgentRegistry) -> None:
-    """Register analysis capabilities without initializing action adapters."""
+    """Extension hook for real local Business Agents.
 
-    inspection.register_business_agent(registry)
-    erp.register_business_agent(registry)
-    hr.register_business_agent(registry)
-    crm.register_business_agent(registry)
+    The framework intentionally ships with no registered business Agent.
+    Each production integration registers its own local Agent here.
+    """

@@ -14,6 +14,7 @@ from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.services.context_compressor import ContextCompressor
 from app.services.session_service import SessionService
+from app.domain.plan_store import default_plan_store
 
 
 def create_app(
@@ -45,6 +46,7 @@ def create_app(
             async with create_postgres_durable_state(runtime_settings.database_url or "") as durable_state:
                 app.state.session_access = SessionAccessStore(durable_state=durable_state)
                 default_action_executor.set_durable_state(durable_state)
+                default_plan_store.set_durable_state(durable_state)
                 context_compressor = ContextCompressor(
                     recent_messages=runtime_settings.context_recent_messages,
                     summary_max_chars=runtime_settings.context_summary_max_chars,
@@ -57,6 +59,7 @@ def create_app(
                 )
                 yield
                 default_action_executor.set_durable_state(None)
+                default_plan_store.set_durable_state(None)
 
     app = FastAPI(title=runtime_settings.app_name, lifespan=lifespan)
     from app.core.session_access import SessionAccessStore

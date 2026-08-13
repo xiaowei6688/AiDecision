@@ -58,6 +58,9 @@ def test_dynamic_tools_include_business_agent_consultation() -> None:
 
     assert "consult_business_agents" in names
     assert "create_execution_plan" in names
+    assert "list_business_agents" in names
+    assert "plan_business_collaboration" in names
+    assert "run_business_collaboration" in names
 
 
 def test_dst_dict_updates_merge_without_losing_existing_facts() -> None:

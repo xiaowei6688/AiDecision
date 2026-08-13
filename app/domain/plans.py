@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from datetime import datetime, timezone
+import hashlib
+import json
 from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -14,6 +18,7 @@ class PlanStatus(StrEnum):
     PLANNED = "planned"
     APPROVED = "approved"
     RUNNING = "running"
+    WAITING_CONFIRMATION = "waiting_confirmation"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     SKIPPED = "skipped"
@@ -33,6 +38,10 @@ class PlanStep(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     depends_on: list[str] = Field(default_factory=list)
     rationale: str = Field(min_length=1)
+    status: PlanStatus = PlanStatus.PLANNED
+    result: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str | None = None
+    attempts: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def require_kind_specific_fields(self) -> "PlanStep":
@@ -49,8 +58,21 @@ class ExecutionPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     goal: str = Field(min_length=1)
+    plan_id: str = Field(default_factory=lambda: str(uuid4()))
+    session_id: str | None = None
     steps: list[PlanStep] = Field(min_length=1)
     status: PlanStatus = PlanStatus.PLANNED
+    approved_by: str | None = None
+    approved_at: datetime | None = None
+    approval_note: str | None = None
+
+    def approve(self, approver: str | None, note: str | None = None) -> None:
+        if self.status != PlanStatus.PLANNED:
+            raise ValueError(f"plan cannot be approved from status: {self.status}")
+        self.status = PlanStatus.APPROVED
+        self.approved_by = approver
+        self.approved_at = datetime.now(timezone.utc)
+        self.approval_note = note
 
 
 def validate_execution_plan(
@@ -82,9 +104,21 @@ def validate_execution_plan(
         action = actions.get(step.action_id)
         if action.input_model is not None:
             step.params = action.input_model.model_validate(step.params).model_dump(mode="json")
+        step.idempotency_key = _step_idempotency_key(plan.plan_id, step)
 
     _ensure_acyclic(plan.steps)
     return plan
+
+
+def _step_idempotency_key(plan_id: str, step: PlanStep) -> str:
+    payload = json.dumps(
+        {"plan_id": plan_id, "step_id": step.step_id, "action_id": step.action_id, "params": step.params},
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=str,
+    ).encode()
+    return f"plan:{hashlib.sha256(payload).hexdigest()}"
 
 
 def _ensure_acyclic(steps: list[PlanStep]) -> None:

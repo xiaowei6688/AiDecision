@@ -30,6 +30,17 @@ class PostgresDurableState:
                     expires_at BIGINT NOT NULL,
                     consumed_at BIGINT
                 );
+                CREATE TABLE IF NOT EXISTS agent_execution_plans (
+                    plan_id TEXT PRIMARY KEY,
+                    session_id TEXT,
+                    plan JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                CREATE TABLE IF NOT EXISTS agent_action_idempotency (
+                    idempotency_key TEXT PRIMARY KEY,
+                    result JSONB NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
                 """
             )
         await self._connection.commit()
@@ -77,6 +88,61 @@ class PostgresDurableState:
             consumed = await cursor.fetchone()
         await self._connection.commit()
         return consumed is not None
+
+    async def save_plan(self, plan_id: str, session_id: str | None, payload: str) -> None:
+        async with self._connection.cursor() as cursor:
+            await cursor.execute(
+                """INSERT INTO agent_execution_plans(plan_id, session_id, plan, updated_at)
+                VALUES (%s, %s, %s::jsonb, NOW())
+                ON CONFLICT (plan_id) DO UPDATE SET
+                    session_id = EXCLUDED.session_id,
+                    plan = EXCLUDED.plan,
+                    updated_at = NOW()""",
+                (plan_id, session_id, payload),
+            )
+        await self._connection.commit()
+
+    async def load_plan(self, plan_id: str, session_id: str | None) -> str:
+        async with self._connection.cursor() as cursor:
+            await cursor.execute(
+                "SELECT session_id, plan FROM agent_execution_plans WHERE plan_id = %s",
+                (plan_id,),
+            )
+            record = await cursor.fetchone()
+        if record is None:
+            raise KeyError(f"Unknown execution plan: {plan_id}")
+        owner_session, payload = cast(tuple[str | None, object], record)
+        if owner_session != session_id:
+            raise PermissionError("Execution plan does not belong to the current session")
+        if isinstance(payload, str):
+            return payload
+        import json
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
+    async def load_idempotent_result(self, idempotency_key: str) -> str | None:
+        async with self._connection.cursor() as cursor:
+            await cursor.execute(
+                "SELECT result FROM agent_action_idempotency WHERE idempotency_key = %s",
+                (idempotency_key,),
+            )
+            record = await cursor.fetchone()
+        if record is None:
+            return None
+        payload = cast(tuple[object], record)[0]
+        if isinstance(payload, str):
+            return payload
+        import json
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
+    async def save_idempotent_result(self, idempotency_key: str, payload: str) -> None:
+        async with self._connection.cursor() as cursor:
+            await cursor.execute(
+                """INSERT INTO agent_action_idempotency(idempotency_key, result)
+                VALUES (%s, %s::jsonb)
+                ON CONFLICT (idempotency_key) DO NOTHING""",
+                (idempotency_key, payload),
+            )
+        await self._connection.commit()
 
 
 @asynccontextmanager

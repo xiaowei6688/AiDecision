@@ -12,4 +12,8 @@ class BusinessAdapter(Protocol):
         params: dict[str, Any],
         context: ActionExecutionContext,
     ) -> dict[str, Any]:
-        """Run a named business operation and return normalized data."""
+        """Run a named business operation and return normalized data.
+
+        For write operations, adapters must forward context.metadata["idempotency_key"]
+        to their upstream system when that system supports idempotent requests.
+        """

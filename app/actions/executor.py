@@ -32,6 +32,7 @@ class BusinessActionExecutor:
         self._confirmation_secret = confirmation_secret.encode()
         self._confirmation_ttl_seconds = confirmation_ttl_seconds
         self._consumed_confirmation_tokens: set[str] = set()
+        self._idempotent_results: dict[str, ActionResult] = {}
         self._durable_state = durable_state
 
     def register_adapter(self, name: str, adapter: BusinessAdapter) -> None:
@@ -53,6 +54,7 @@ class BusinessActionExecutor:
         params: dict[str, Any],
         context: ActionExecutionContext | None = None,
         confirmation_token: str | None = None,
+        idempotency_key: str | None = None,
     ) -> ActionResult:
         context = context or ActionExecutionContext()
         try:
@@ -97,6 +99,10 @@ class BusinessActionExecutor:
                 error_code="POLICY_REJECTED",
             )
 
+        cached = await self._load_idempotent_result(idempotency_key)
+        if cached is not None:
+            return cached
+
         if action.confirmation.required and not await self._consume_confirmation_token(
             confirmation_token, action_id, params, context
         ):
@@ -120,7 +126,13 @@ class BusinessActionExecutor:
             )
 
         try:
-            data = await adapter.invoke(action.executor.method, params, context)
+            adapter_context = ActionExecutionContext(
+                user_id=context.user_id,
+                user_roles=context.user_roles,
+                session_id=context.session_id,
+                metadata={**context.metadata, "idempotency_key": idempotency_key},
+            )
+            data = await adapter.invoke(action.executor.method, params, adapter_context)
         except Exception as exc:
             return ActionResult(
                 status="failed",
@@ -129,12 +141,35 @@ class BusinessActionExecutor:
                 error_code="ADAPTER_ERROR",
             )
 
-        return ActionResult(
+        result = ActionResult(
             status="success",
             action_id=action_id,
             message=self._success_message(action.success_template, data),
             data=data,
         )
+        await self._save_idempotent_result(idempotency_key, result)
+        return result
+
+    async def _load_idempotent_result(self, idempotency_key: str | None) -> ActionResult | None:
+        if not idempotency_key:
+            return None
+        if self._durable_state is not None:
+            payload = await self._durable_state.load_idempotent_result(idempotency_key)
+            if payload is None:
+                return None
+            values = json.loads(payload)
+            return ActionResult(**values)
+        return self._idempotent_results.get(idempotency_key)
+
+    async def _save_idempotent_result(self, idempotency_key: str | None, result: ActionResult) -> None:
+        if not idempotency_key:
+            return
+        if self._durable_state is not None:
+            await self._durable_state.save_idempotent_result(
+                idempotency_key, json.dumps(result.__dict__, ensure_ascii=False, default=str)
+            )
+            return
+        self._idempotent_results[idempotency_key] = result
 
     def _confirmation_payload(
         self,

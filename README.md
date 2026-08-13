@@ -5,7 +5,7 @@
 核心能力：
 
 - 提供 HTTP 与 WebSocket 接口。
-- 主 Agent 通过常驻通用 SubAgent 和按需领域专家拆分复杂判断。
+- 主 Agent 通过常驻通用 SubAgent 和已注册的本地业务 Agent 拆分复杂判断。
 - 通过 ActionSpec + Executor + Adapter 接入不同业务系统，Agent 只调用统一业务动作。
 - 通过 `semantic_query` 预留 text-to-sql 查询工具，用于跨 datasource 查询、参数补全和规则校验。
 - 使用 `session_id` 作为唯一会话 ，通过 PostgreSQL checkpoint 持久化会话状态。
@@ -33,51 +33,59 @@ app/integrations/contract/
 
 启动时由 `app/integrations/bootstrap.py` 统一注册。主 Agent 只通过
 `list_business_actions`、`semantic_query`、`call_business_action` 工作，不直接感知
-巡检、ERP、HR 或其他系统的真实接口。
+任何业务系统的真实接口。
 
 ## 业务 Agent 编排
 
-系统始终由一个主编排 Agent 接待用户。ERP、HR、巡检等业务 Agent 不是用户选择的根 Agent，
+系统始终由一个主编排 Agent 接待用户。各业务系统的业务 Agent 不是用户选择的根 Agent，
 而是主 Agent 根据任务按需调度的领域能力。每个业务 Agent 声明自己的数据源、可建议的动作前缀、
 领域约束与跨系统依赖；它只输出分析和建议，真实查询及动作仍由主 Agent 经统一工具执行。
 
 ```text
 用户请求
-  -> 主编排 Agent 识别涉及的业务域
-  -> consult_business_agents(["inspection", "erp", "hr"])
+  -> 主编排 Agent 识别已注册的业务域
+  -> consult_business_agents(["业务 Agent A", "业务 Agent B"])
   -> 汇总依赖、冲突与执行顺序
   -> semantic_query / call_business_action
 ```
 
-业务 Agent 与 Action/Adapter 同属于 `app/integrations/<system>/`：其中 `agent.py` 声明业务
-推理能力，`actions.py`、`adapter.py`、`checks.py` 负责真实受控执行。接入真实 CRM、MES 等系统时，
-新增完整 integration 包；不要把业务 Agent 做成新的用户会话根 Agent。`app/integrations/crm/`
-是仅注册分析能力、尚未连接真实系统的样例。
+主 Agent 先使用 `list_business_agents` 获取能力目录，再用 `plan_business_collaboration` 定义
+业务 Agent 的选择理由和依赖图；`run_business_collaboration` 按该图运行，无依赖 Agent 并发，
+有依赖 Agent 接收前置的结构化建议。这样业务协作是框架的显式、可校验行为，而非仅依赖 Prompt。
 
-业务语义模型不放在 Agent 协议中：跨系统引用（员工、设备、物料）在 `app/domain/models.py`，
-各系统命令模型在 `app/integrations/<system>/models.py`。ActionSpec 引用对应命令模型，
-Executor 会在调用 Adapter 前完成结构校验并把 JSON Schema 暴露给主 Agent。
+业务 Agent 的调度通过统一的本地 Runtime 协议进行。每个 integration 在本项目内封装自己的
+业务 Agent，当前默认实现为 `LocalLLMBusinessAgent`；主 Agent 只面对统一的 `BusinessAdvice`，
+不需要知道各业务系统的领域推理细节。
+
+业务 Agent 与 Action/Adapter 同属于 `app/integrations/<system>/`：其中 `agent.py` 声明业务
+推理能力，`actions.py`、`adapter.py`、`checks.py` 负责真实受控执行。框架不再附带任何 demo
+业务 Agent；接入真实系统时新增完整 integration 包，并在 `register_business_agents` 中注册本地
+BusinessAgentManifest。不要把业务 Agent 做成新的用户会话根 Agent。
+
+业务语义模型不放在 Agent 协议中：共享引用模型放在 `app/domain/`，各系统命令模型放在
+`app/integrations/<system>/models.py`。ActionSpec 引用对应命令模型，Executor 会在调用 Adapter
+前完成结构校验并把 JSON Schema 暴露给主 Agent。
 
 跨系统任务先调用 `create_execution_plan` 创建只读计划预览。计划会校验步骤唯一性、动作参数、
 已注册数据源及依赖无环，但不会查询或执行。包含写动作的计划必须先由主 Agent 通过 HITL 获得批准；
 按计划执行将在后续执行器中实现。
 
-## Role SubAgents And Dynamic Experts
+计划动作步骤会获得稳定的 `idempotency_key`。执行器只缓存成功的动作结果，并在恢复时跳过已成功
+步骤；真实 Adapter 必须将该键透传给其 HTTP/RPC/MCP 上游的幂等请求机制，才能覆盖网络超时后
+“上游已提交但本地未收到结果”的场景。
+
+## Role SubAgents
 
 角色能力按用途拆分在 `app/agents/roles`：
 
 ```text
 app/agents/roles/
   common/      # 常驻 SubAgent，如 requirements_analyst
-  domains/     # 按需领域专家提示，如 erp/hr/inspection
 ```
 
 默认只注册 `requirements_analyst` 这类通用 SubAgent，避免每次对话都加载过多领域
-Agent 描述。ERP/HR/巡检领域判断通过 `consult_business_agents` 工具按需触发，只有在
-复杂、模糊、高风险或跨系统判断时才消耗额外 token。
-
-领域专家只负责分析、澄清、建议 action_id 和参数；真实查询走 `semantic_query`，
-真实业务执行仍统一走 `call_business_action` 和 `BusinessActionExecutor`。
+Agent 描述。真实业务系统以本地 Business Agent 方式在 `app/integrations/<system>/agent.py`
+注册，只有在复杂、模糊、高风险或跨系统判断时才被主 Agent 按需调度。
 
 ## WebSocket Protocol
 

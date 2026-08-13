@@ -9,8 +9,8 @@ from app.agents.roles.common.requirements_analyst import (
 def build_role_subagents(model: BaseChatModel) -> list[SubAgent]:
     """Build subagents used by the main orchestrator.
 
-    Business Agents are loaded dynamically through consult_business_agents instead
-    of being registered as always-on deepagents subagents.
+    Business Agents are registered by production integrations and orchestrated
+    separately; only common role SubAgents belong in this list.
     """
 
     return [

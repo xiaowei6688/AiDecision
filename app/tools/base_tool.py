@@ -16,7 +16,8 @@ from app.adapters.text_to_sql import TextToSqlClient
 from app.core.config import get_settings
 from app.core.runtime_context import get_runtime_context
 from app.agents.business_bootstrap import bootstrap_business_agents
-from app.domain.plans import ExecutionPlan, validate_execution_plan
+from app.domain.plan_store import default_plan_store
+from app.domain.plans import ExecutionPlan, PlanStatus, validate_execution_plan
 
 
 DEFAULT_HUMAN_ACTIONS = ["approve", "reject", "edit", "clarify"]
@@ -158,7 +159,18 @@ def list_business_actions(query: str = "", limit: int = 8) -> dict[str, Any]:
 
 
 @tool
-def create_execution_plan(goal: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
+def list_business_agents() -> dict[str, Any]:
+    """列出可由主 Agent 调度的业务 Agent 能力目录。"""
+
+    registry = bootstrap_business_agents()
+    return {
+        "status": "success",
+        "business_agents": [agent.public_dict() for agent in registry.list()],
+    }
+
+
+@tool
+async def create_execution_plan(goal: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
     """创建并校验跨系统执行计划；只返回预览，不会查询或执行任何业务动作。"""
 
     _ensure_business_runtime()
@@ -177,11 +189,108 @@ def create_execution_plan(goal: str, steps: list[dict[str, Any]]) -> dict[str, A
             "error_code": "INVALID_EXECUTION_PLAN",
             "message": str(exc),
         }
+    runtime = get_runtime_context()
+    await default_plan_store.put(validated, runtime.session_id)
     return {
         "status": "success",
         "plan": validated.model_dump(mode="json"),
+        "plan_id": validated.plan_id,
         "requires_human_approval": any(step.kind == "action" for step in validated.steps),
     }
+
+
+@tool
+async def approve_execution_plan(plan_id: str, note: str | None = None) -> dict[str, Any]:
+    """批准当前会话的计划；批准不会执行任何步骤。"""
+
+    runtime = get_runtime_context()
+    try:
+        plan = await default_plan_store.get(plan_id, runtime.session_id)
+        plan.approve(runtime.user_id, note)
+        await default_plan_store.put(plan, runtime.session_id)
+    except (KeyError, PermissionError, ValueError) as exc:
+        return {"status": "failed", "error_code": "PLAN_APPROVAL_REJECTED", "message": str(exc)}
+    return {"status": "success", "plan": plan.model_dump(mode="json")}
+
+
+async def _execute_plan_step(
+    plan: ExecutionPlan,
+    step: Any,
+    confirmation_token: str | None,
+) -> dict[str, Any]:
+    if step.kind == "query":
+        settings = get_settings()
+        result = TextToSqlClient(
+            base_url=settings.text_to_sql_base_url,
+            timeout_seconds=settings.text_to_sql_timeout_seconds,
+        ).query(step.datasource, step.question, step.filters)
+        return result
+    runtime = get_runtime_context()
+    context = ActionExecutionContext(
+        user_id=runtime.user_id,
+        user_roles=list(runtime.user_roles),
+        session_id=runtime.session_id,
+        metadata=runtime.metadata,
+    )
+    action_result = await default_action_executor.execute(
+        action_id=step.action_id,
+        params=step.params,
+        context=context,
+        confirmation_token=confirmation_token,
+        idempotency_key=step.idempotency_key,
+    )
+    return _action_result_to_dict(action_result)
+
+
+@tool
+async def execute_execution_plan(
+    plan_id: str,
+    confirmation_tokens: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """按依赖顺序执行已批准计划；遇到确认要求会暂停并返回 token。"""
+
+    runtime = get_runtime_context()
+    try:
+        plan = await default_plan_store.get(plan_id, runtime.session_id)
+    except (KeyError, PermissionError) as exc:
+        return {"status": "failed", "error_code": "PLAN_NOT_FOUND", "message": str(exc)}
+    if plan.status not in {PlanStatus.APPROVED, PlanStatus.WAITING_CONFIRMATION, PlanStatus.RUNNING}:
+        return {"status": "failed", "error_code": "PLAN_NOT_APPROVED", "message": f"plan status: {plan.status}"}
+
+    plan.status = PlanStatus.RUNNING
+    completed = {step.step_id for step in plan.steps if step.status == PlanStatus.SUCCEEDED}
+    tokens = confirmation_tokens or {}
+    for step in plan.steps:
+        if step.status == PlanStatus.SUCCEEDED:
+            continue
+        if not set(step.depends_on).issubset(completed):
+            step.status = PlanStatus.SKIPPED
+            step.result = {"error": "dependency did not succeed"}
+            plan.status = PlanStatus.FAILED
+            await default_plan_store.put(plan, runtime.session_id)
+            break
+        step.status = PlanStatus.RUNNING
+        step.attempts += 1
+        await default_plan_store.put(plan, runtime.session_id)
+        result = await _execute_plan_step(plan, step, tokens.get(step.step_id))
+        step.result = result
+        if result.get("status") == "requires_confirmation":
+            step.status = PlanStatus.WAITING_CONFIRMATION
+            plan.status = PlanStatus.WAITING_CONFIRMATION
+            await default_plan_store.put(plan, runtime.session_id)
+            break
+        if result.get("status") == "failed":
+            step.status = PlanStatus.FAILED
+            plan.status = PlanStatus.FAILED
+            await default_plan_store.put(plan, runtime.session_id)
+            break
+        step.status = PlanStatus.SUCCEEDED
+        completed.add(step.step_id)
+        await default_plan_store.put(plan, runtime.session_id)
+    else:
+        plan.status = PlanStatus.SUCCEEDED
+        await default_plan_store.put(plan, runtime.session_id)
+    return {"status": "success", "plan": plan.model_dump(mode="json")}
 
 
 @tool
@@ -320,7 +429,10 @@ AGENT_TOOLS = [
     update_dialogue_state,
     request_human_input,
     list_business_actions,
+    list_business_agents,
     create_execution_plan,
+    approve_execution_plan,
+    execute_execution_plan,
     semantic_query,
     call_business_action,
 ]
