@@ -6,8 +6,9 @@ import pytest
 
 from app.main import create_app
 from app.schemas.chat import HumanResumeRequest, SessionStateResponse
-from app.core.auth import AuthContext
+from app.core.auth import AuthContext, authenticate_request
 from app.core.session_access import SessionAccessStore
+from app.core.config import Settings
 
 
 class FakeSessionService:
@@ -72,13 +73,30 @@ class FakeSessionService:
 
 
 def test_health_endpoint_uses_injected_service() -> None:
-    app = create_app(session_service=FakeSessionService())  # type: ignore[arg-type]
+    app = create_app(
+        settings=Settings(_env_file=None, auth_enabled=False),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
 
     with TestClient(app) as client:
         response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_authentication_can_be_disabled() -> None:
+    from app.core.config import Settings
+
+    settings = Settings(_env_file=None, auth_enabled=False)
+
+    class _Request:
+        headers = {}
+
+    auth = authenticate_request(_Request(), settings)  # type: ignore[arg-type]
+
+    assert auth.user_id == "anonymous-user"
+    assert auth.tenant_id == "anonymous-tenant"
 
 
 @pytest.mark.asyncio
@@ -94,7 +112,10 @@ async def test_session_access_rejects_different_owner() -> None:
 
 
 def test_session_state_endpoint() -> None:
-    app = create_app(session_service=FakeSessionService())  # type: ignore[arg-type]
+    app = create_app(
+        settings=Settings(_env_file=None, auth_enabled=False),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
 
     with TestClient(app) as client:
         response = client.get("/sessions/demo/state")
@@ -105,7 +126,10 @@ def test_session_state_endpoint() -> None:
 
 
 def test_create_session_endpoint_returns_session_id() -> None:
-    app = create_app(session_service=FakeSessionService())  # type: ignore[arg-type]
+    app = create_app(
+        settings=Settings(_env_file=None, auth_enabled=False),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
 
     with TestClient(app) as client:
         response = client.post("/sessions")
@@ -115,7 +139,10 @@ def test_create_session_endpoint_returns_session_id() -> None:
 
 
 def test_http_message_endpoint_returns_event_and_state() -> None:
-    app = create_app(session_service=FakeSessionService())  # type: ignore[arg-type]
+    app = create_app(
+        settings=Settings(_env_file=None, auth_enabled=False),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
 
     with TestClient(app) as client:
         response = client.post(
@@ -135,7 +162,10 @@ def test_http_message_endpoint_returns_event_and_state() -> None:
 
 
 def test_http_resume_endpoint_returns_event_and_state() -> None:
-    app = create_app(session_service=FakeSessionService())  # type: ignore[arg-type]
+    app = create_app(
+        settings=Settings(_env_file=None, auth_enabled=False),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
 
     with TestClient(app) as client:
         response = client.post(
@@ -155,7 +185,10 @@ def test_http_resume_endpoint_returns_event_and_state() -> None:
 
 
 def test_chat_websocket_returns_message_and_dst_state() -> None:
-    app = create_app(session_service=FakeSessionService())  # type: ignore[arg-type]
+    app = create_app(
+        settings=Settings(_env_file=None, auth_enabled=False),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
 
     with TestClient(app) as client:
         with client.websocket_connect("/ws/chat/demo") as websocket:
@@ -175,7 +208,10 @@ def test_chat_websocket_returns_message_and_dst_state() -> None:
 
 
 def test_chat_websocket_without_session_id_creates_session() -> None:
-    app = create_app(session_service=FakeSessionService())  # type: ignore[arg-type]
+    app = create_app(
+        settings=Settings(_env_file=None, auth_enabled=False),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
 
     with TestClient(app) as client:
         with client.websocket_connect("/ws/chat") as websocket:
@@ -187,7 +223,10 @@ def test_chat_websocket_without_session_id_creates_session() -> None:
 
 
 def test_chat_websocket_accepts_resume_event() -> None:
-    app = create_app(session_service=FakeSessionService())  # type: ignore[arg-type]
+    app = create_app(
+        settings=Settings(_env_file=None, auth_enabled=False),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
 
     with TestClient(app) as client:
         with client.websocket_connect("/ws/chat/demo") as websocket:
@@ -213,7 +252,10 @@ def test_chat_websocket_accepts_resume_event() -> None:
 
 
 def test_single_connection_routes_to_the_client_selected_session() -> None:
-    app = create_app(session_service=FakeSessionService())  # type: ignore[arg-type]
+    app = create_app(
+        settings=Settings(_env_file=None, auth_enabled=False),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
 
     with TestClient(app) as client:
         session_id = client.post("/sessions").json()["session_id"]

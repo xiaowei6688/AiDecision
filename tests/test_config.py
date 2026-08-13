@@ -7,3 +7,4 @@ def test_settings_defaults_are_development_friendly() -> None:
     assert settings.app_name == "AI Decision Service"
     assert settings.environment == "development"
     assert settings.agent_model
+    assert settings.auth_enabled is True

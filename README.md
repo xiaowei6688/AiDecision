@@ -18,6 +18,8 @@
 uv run uvicorn app.main:app --reload
 ```
 
+详细使用说明见 [docs/agent-usage.md](</Users/levin/Documents/PythonCode/AiDecision/docs/agent-usage.md>).
+
 ## Business Integrations
 
 通用框架放在 `app/actions` 和 `app/tools`，具体业务系统放在
@@ -58,9 +60,10 @@ app/integrations/contract/
 不需要知道各业务系统的领域推理细节。
 
 业务 Agent 与 Action/Adapter 同属于 `app/integrations/<system>/`：其中 `agent.py` 声明业务
-推理能力，`actions.py`、`adapter.py`、`checks.py` 负责真实受控执行。框架不再附带任何 demo
-业务 Agent；接入真实系统时新增完整 integration 包，并在 `register_business_agents` 中注册本地
-BusinessAgentManifest。不要把业务 Agent 做成新的用户会话根 Agent。
+推理能力，`actions.py`、`adapter.py`、`checks.py`、`workflows.py`、`routes.py`
+负责真实受控执行。框架通过 `app/integrations/<system>/bundle.py` 暴露的 `bundle` 自动发现集成。
+接入真实系统时新增完整 integration 包，并在 bundle 中注册本地 BusinessAgentManifest。
+不要把业务 Agent 做成新的用户会话根 Agent。
 
 业务语义模型不放在 Agent 协议中：共享引用模型放在 `app/domain/`，各系统命令模型放在
 `app/integrations/<system>/models.py`。ActionSpec 引用对应命令模型，Executor 会在调用 Adapter

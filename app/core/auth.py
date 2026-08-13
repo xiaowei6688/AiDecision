@@ -45,6 +45,13 @@ def _authenticate(
     *,
     http: bool,
 ) -> AuthContext:
+    if not settings.auth_enabled:
+        return AuthContext(
+            user_id=user_id or "anonymous-user",
+            tenant_id=tenant_id or "anonymous-tenant",
+            roles=tuple(r.strip() for r in (roles_header or "").split(",") if r.strip()),
+        )
+
     # A real deployment should replace this with JWT/SSO verification. These
     # headers are intentionally accepted only in development.
     if settings.environment == "development" and not authorization:
