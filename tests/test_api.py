@@ -210,3 +210,26 @@ def test_chat_websocket_accepts_resume_event() -> None:
     assert resume_result["data"]["resumed"] == "clarify"
     assert resume_result["data"]["content"] == "会议主题是 Q3 产品规划"
     assert state["type"] == "dst_state"
+
+
+def test_single_connection_routes_to_the_client_selected_session() -> None:
+    app = create_app(session_service=FakeSessionService())  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        session_id = client.post("/sessions").json()["session_id"]
+        with client.websocket_connect("/ws/chat") as websocket:
+            websocket.receive_json()
+            websocket.send_json({
+                "type": "message",
+                "session_id": session_id,
+                "request_id": "request-1",
+                "message_id": "message-1",
+                "content": "hello",
+            })
+            message = websocket.receive_json()
+            state = websocket.receive_json()
+
+    assert message["session_id"] == session_id
+    assert message["request_id"] == "request-1"
+    assert message["parent_message_id"] == "message-1"
+    assert state["session_id"] == session_id

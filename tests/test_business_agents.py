@@ -17,10 +17,10 @@ from app.agents.business_runtime import (
 from app.tools.dynamic_tools import _consult_business_agent
 
 
-def test_framework_starts_with_no_demo_business_agents() -> None:
+def test_framework_registers_the_inspection_business_agent() -> None:
     registry = bootstrap_business_agents(BusinessAgentRegistry())
 
-    assert registry.list() == []
+    assert [agent.business_id for agent in registry.list()] == ["inspection"]
 
 
 def test_business_agent_registry_rejects_duplicate_ids() -> None:

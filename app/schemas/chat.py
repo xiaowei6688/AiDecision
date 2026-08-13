@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class ClientEventType(StrEnum):
@@ -12,6 +12,7 @@ class ClientEventType(StrEnum):
     MESSAGE = "message"
     RESUME = "resume"
     PING = "ping"
+    ACTION_RESULT = "actionResult"
 
 
 class ServerEventType(StrEnum):
@@ -39,12 +40,43 @@ class CreateSessionResponse(BaseModel):
     session_id: str
 
 
+class SessionRecord(BaseModel):
+    session_id: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    intent: str | None = None
+    dialogue_stage: str | None = None
+    summary: str | None = None
+
+
+class ListSessionsResponse(BaseModel):
+    sessions: list[SessionRecord]
+    total: int
+
+
+class SessionHistoryResponse(BaseModel):
+    session_id: str
+    exists: bool
+    history: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class WebSocketClientEvent(BaseModel):
     """客户端到服务器WebSocket负载."""
 
     type: ClientEventType
+    session_id: str | None = None
+    request_id: str | None = None
+    message_id: str | None = None
     content: str | None = None
     resume: Any | None = None
+    action_code: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("action_code", "actionCode"),
+    )
+    action_result: dict[str, Any] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("action_result", "actionResult"),
+    )
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -53,6 +85,9 @@ class WebSocketServerEvent(BaseModel):
 
     type: ServerEventType
     session_id: str
+    request_id: str | None = None
+    message_id: str | None = None
+    parent_message_id: str | None = None
     content: str | None = None
     data: dict[str, Any] = Field(default_factory=dict)
 
@@ -74,6 +109,7 @@ class SessionStateResponse(BaseModel):
     dialogue_stage: str | None = None
     summary: str | None = None
     pending_human_action: dict[str, Any] | None = None
+    domain_state: dict[str, Any] = Field(default_factory=dict)
     last_active_agent: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 

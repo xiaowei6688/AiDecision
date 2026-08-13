@@ -13,6 +13,7 @@ from app.schemas.chat import (
     WebSocketClientEvent,
     WebSocketServerEvent,
 )
+from app.integrations.websocket_actions import action_result_to_resume_request
 from app.services.session_service import SessionService
 from app.core.auth import authenticate_websocket
 
@@ -25,7 +26,12 @@ router = APIRouter()
 async def new_chat_websocket(websocket: WebSocket) -> None:
     """为首次前端连接创建新的会话."""
 
-    await _chat_websocket(websocket, session_id=str(uuid4()), created=True)
+    requested_session_id = websocket.query_params.get("session_id")
+    await _chat_websocket(
+        websocket,
+        session_id=requested_session_id or str(uuid4()),
+        created=requested_session_id is None,
+    )
 
 
 @router.websocket("/ws/chat/{session_id}")
@@ -68,12 +74,40 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
                 await _send_error(websocket, session_id, "invalid_payload", str(exc))
                 continue
 
+            event_session_id = client_event.session_id or session_id
+            try:
+                await access.ensure_access(event_session_id, auth)
+            except PermissionError as exc:
+                await _send_error(websocket, event_session_id, "session_not_found", str(exc))
+                continue
+
             if client_event.type == ClientEventType.PING:
                 await _send(
                     websocket,
                     WebSocketServerEvent(
                         type=ServerEventType.PONG,
-                        session_id=session_id,
+                        session_id=event_session_id,
+                        request_id=client_event.request_id,
+                    ),
+                )
+                continue
+
+            if client_event.type == ClientEventType.ACTION_RESULT:
+                resume_request = action_result_to_resume_request(client_event)
+                event = await session_service.resume_event(event_session_id, resume_request)
+                event["request_id"] = client_event.request_id
+                event["parent_message_id"] = client_event.message_id
+                event["session_id"] = event_session_id
+                await websocket.send_json(event)
+                state = await session_service.get_state(event_session_id)
+                await _send(
+                    websocket,
+                    WebSocketServerEvent(
+                        type=ServerEventType.DST_STATE,
+                        session_id=event_session_id,
+                        request_id=client_event.request_id,
+                        message_id=str(uuid4()),
+                        data=state.model_dump(),
                     ),
                 )
                 continue
@@ -85,36 +119,48 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
                     await _send_error(websocket, session_id, "invalid_resume", str(exc))
                     continue
 
-                event = await session_service.resume_event(session_id, resume_request)
+                event = await session_service.resume_event(event_session_id, resume_request)
+                event["request_id"] = client_event.request_id
+                event["parent_message_id"] = client_event.message_id
+                event["session_id"] = event_session_id
                 await websocket.send_json(event)
-                state = await session_service.get_state(session_id)
+                state = await session_service.get_state(event_session_id)
                 await _send(
                     websocket,
                     WebSocketServerEvent(
                         type=ServerEventType.DST_STATE,
-                        session_id=session_id,
+                        session_id=event_session_id,
+                        request_id=client_event.request_id,
+                        message_id=str(uuid4()),
+                        parent_message_id=client_event.message_id,
                         data=state.model_dump(),
                     ),
                 )
                 continue
 
             if not client_event.content:
-                await _send_error(websocket, session_id, "empty_message", "内容是必需的")
+                await _send_error(websocket, event_session_id, "empty_message", "内容是必需的")
                 continue
 
             async for event in session_service.stream_message(
-                session_id=session_id,
+                session_id=event_session_id,
                 message=client_event.content,
                 metadata=client_event.metadata,
             ):
+                event["session_id"] = event_session_id
+                event["request_id"] = client_event.request_id
+                event["parent_message_id"] = client_event.message_id
                 await websocket.send_json(event)
 
-            state = await session_service.get_state(session_id)
+            state = await session_service.get_state(event_session_id)
             await _send(
                 websocket,
                 WebSocketServerEvent(
                     type=ServerEventType.DST_STATE,
-                    session_id=session_id,
+                    session_id=event_session_id,
+                    request_id=client_event.request_id,
+                    message_id=str(uuid4()),
+                    parent_message_id=client_event.message_id,
                     data=state.model_dump(),
                 ),
             )

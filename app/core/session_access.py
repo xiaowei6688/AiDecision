@@ -63,3 +63,11 @@ class SessionAccessStore:
             session_id=session_id,
             metadata={"tenant_id": auth.tenant_id, **auth.metadata},
         )
+
+    def list_owned(self, auth: AuthContext) -> list[str]:
+        with self._lock:
+            return [
+                session_id
+                for session_id, (owner, _) in self._owners.items()
+                if owner == SessionOwner(auth.user_id, auth.tenant_id)
+            ]

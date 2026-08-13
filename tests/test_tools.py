@@ -3,8 +3,14 @@ from app.tools.base_tool import (
     _slots_from_human_resume,
     _summary_from_human_resume,
 )
+from app.actions.schemas import ActionResult
 from app.tools.dynamic_tools import build_agent_tools
 from app.agents.state import merge_dict_state
+from app.integrations.projections import project_action_result
+from app.integrations.bootstrap import register_integrations
+from app.actions.executor import default_action_executor
+from app.actions.policy import default_policy_engine
+from app.actions.registry import default_action_registry
 
 
 class _FakeModel:
@@ -52,6 +58,7 @@ def test_slots_from_human_resume_includes_response_and_data() -> None:
 
 
 def test_dynamic_tools_include_business_agent_consultation() -> None:
+    register_integrations(default_action_registry, default_action_executor, default_policy_engine)
     tools = build_agent_tools(_FakeModel())
 
     names = {getattr(item, "name", "") for item in tools}
@@ -61,6 +68,9 @@ def test_dynamic_tools_include_business_agent_consultation() -> None:
     assert "list_business_agents" in names
     assert "plan_business_collaboration" in names
     assert "run_business_collaboration" in names
+    assert "inspection_query_plan_detail" in names
+    assert "inspection_query_coverage" in names
+    assert "inspection_build_work_order_fill_state" in names
 
 
 def test_dst_dict_updates_merge_without_losing_existing_facts() -> None:
@@ -72,3 +82,13 @@ def test_dst_dict_updates_merge_without_losing_existing_facts() -> None:
         "owner": {"value": "张三"},
         "deadline": {"value": "下周五"},
     }
+
+
+def test_action_result_projection_defaults_to_empty_dict_without_plugins() -> None:
+    result = ActionResult(
+        status="success",
+        action_id="demo.action",
+        message="ok",
+    )
+
+    assert project_action_result(result) == {}

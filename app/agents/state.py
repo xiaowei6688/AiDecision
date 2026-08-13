@@ -62,6 +62,7 @@ class DecisionDSTState(DeepAgentState):
     dialogue_stage: NotRequired[DialogueStage]
     summary: NotRequired[str]
     pending_human_action: NotRequired[PendingHumanAction | None]
+    domain_state: NotRequired[Annotated[dict[str, Any], merge_dict_state]]
     last_active_agent: NotRequired[str | None]
     metadata: NotRequired[Annotated[dict[str, Any], merge_dict_state]]
 

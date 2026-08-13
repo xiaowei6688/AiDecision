@@ -18,6 +18,7 @@ from app.core.runtime_context import get_runtime_context
 from app.agents.business_bootstrap import bootstrap_business_agents
 from app.domain.plan_store import default_plan_store
 from app.domain.plans import ExecutionPlan, PlanStatus, validate_execution_plan
+from app.integrations.projections import project_action_result
 
 
 DEFAULT_HUMAN_ACTIONS = ["approve", "reject", "edit", "clarify"]
@@ -34,6 +35,7 @@ def update_dialogue_state(
     summary: str | None = None,
     slots: dict[str, Any] | None = None,
     last_active_agent: str | None = None,
+    domain_state: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
     *,
     tool_call_id: Annotated[str, InjectedToolCallId],
@@ -51,6 +53,8 @@ def update_dialogue_state(
         update["slots"] = slots
     if last_active_agent is not None:
         update["last_active_agent"] = last_active_agent
+    if domain_state is not None:
+        update["domain_state"] = domain_state
     if metadata is not None:
         update["metadata"] = metadata
 
@@ -341,13 +345,15 @@ async def call_business_action(
 
 
 def _action_result_to_dict(result: ActionResult) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "status": result.status,
         "action_id": result.action_id,
         "message": result.message,
         "data": result.data,
         "error_code": result.error_code,
     }
+    payload.update(project_action_result(result))
+    return payload
 
 
 def _format_human_resume_for_tool(resume_value: Any) -> str:

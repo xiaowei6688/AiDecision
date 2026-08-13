@@ -147,9 +147,29 @@ class SessionService:
             dialogue_stage=self._stringify(values.get("dialogue_stage")),
             summary=values.get("summary"),
             pending_human_action=pending if isinstance(pending, dict) else None,
+            domain_state=values.get("domain_state") if isinstance(values.get("domain_state"), dict) else {},
             last_active_agent=values.get("last_active_agent"),
             metadata=values.get("metadata") or {},
         )
+
+    async def get_session_history(self, session_id: str) -> list[dict[str, Any]]:
+        """Return checkpoint messages in the legacy chat-history shape."""
+
+        snapshot = await self._agent.aget_state(self._config(session_id))
+        values = dict(snapshot.values or {})
+        messages = values.get("messages")
+        if not isinstance(messages, Sequence) or isinstance(messages, str | bytes):
+            return []
+        history: list[dict[str, Any]] = []
+        for message in messages:
+            if not isinstance(message, BaseMessage):
+                continue
+            history.append({
+                "type": message.type,
+                "role": "assistant" if isinstance(message, AIMessage) else "user",
+                "content": self._message_content_to_text(message.content),
+            })
+        return history
 
     async def _compress_context_if_needed(self, session_id: str) -> None:
         if self._context_compressor is None:

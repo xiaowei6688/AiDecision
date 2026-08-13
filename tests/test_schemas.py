@@ -1,4 +1,4 @@
-from app.schemas.chat import ClientEventType, WebSocketClientEvent
+from app.schemas.chat import ClientEventType, SessionStateResponse, WebSocketClientEvent
 
 
 def test_websocket_client_event_validates_message_payload() -> None:
@@ -13,3 +13,19 @@ def test_websocket_client_event_validates_message_payload() -> None:
     assert event.type == ClientEventType.MESSAGE
     assert event.content == "hello"
     assert event.metadata["user_id"] == "u1"
+
+
+def test_session_state_exposes_generic_domain_state() -> None:
+    state = SessionStateResponse(
+        session_id="demo",
+        exists=True,
+        domain_state={
+            "inspection": {
+                "workOrderFillState": {
+                    "status": "READY",
+                },
+            },
+        },
+    )
+
+    assert state.domain_state["inspection"]["workOrderFillState"]["status"] == "READY"

@@ -8,6 +8,7 @@ from app.agents.main_agent import build_main_agent
 from app.actions.executor import default_action_executor
 from app.api.routes import router as http_router
 from app.api.websocket import router as websocket_router
+from app.integrations.bootstrap import register_integrations
 from app.core.checkpoint import create_postgres_checkpointer
 from app.core.durable_state import create_postgres_durable_state
 from app.core.config import Settings, get_settings
@@ -76,6 +77,11 @@ def create_app(
     )
     app.include_router(http_router)
     app.include_router(websocket_router)
+    from app.actions.policy import default_policy_engine
+    from app.actions.registry import default_action_registry
+
+    for router in register_integrations(default_action_registry, default_action_executor, default_policy_engine):
+        app.include_router(router)
     return app
 
 

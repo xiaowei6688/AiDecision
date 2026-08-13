@@ -1,22 +1,37 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+from fastapi import APIRouter
+
 from app.actions.executor import BusinessActionExecutor
 from app.actions.policy import PolicyEngine
 from app.actions.registry import ActionRegistry
 from app.agents.business_agents import BusinessAgentRegistry
+from app.integrations.contracts import IntegrationBundle
+from app.integrations.inspection.bundle import inspection_bundle
+
+
+_BUNDLES: Sequence[IntegrationBundle] = (inspection_bundle,)
 
 
 def register_integrations(
     registry: ActionRegistry,
     executor: BusinessActionExecutor,
     policy_engine: PolicyEngine,
-) -> None:
-    """Register all enabled business system integrations."""
+) -> list[APIRouter]:
+    """Register all enabled integration bundles and return their routers."""
 
-    # Production integrations register their own actions here.
+    routers: list[APIRouter] = []
+    for bundle in _BUNDLES:
+        routers.extend(bundle.register(registry, executor, policy_engine))
+    return routers
 
 
 def register_business_agents(registry: BusinessAgentRegistry) -> None:
-    """Extension hook for real local Business Agents.
+    """Register business agents supplied by integration bundles."""
 
-    The framework intentionally ships with no registered business Agent.
-    Each production integration registers its own local Agent here.
-    """
+    for bundle in _BUNDLES:
+        register = getattr(bundle, "register_business_agents", None)
+        if register is not None:
+            register(registry)

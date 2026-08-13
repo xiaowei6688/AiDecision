@@ -16,15 +16,18 @@ from app.agents.business_agents import (
 )
 from app.agents.business_runtime import BusinessAgentInvocation, build_business_agent_runtime
 from app.tools.base_tool import AGENT_TOOLS
+from app.integrations.tools import list_integration_tools
 
 
 def build_agent_tools(model: BaseChatModel) -> list[Any]:
     """Build tools that may need runtime dependencies such as the chat model."""
 
+    bootstrap_actions()
     available = {tool.name: tool for tool in AGENT_TOOLS}
     available["plan_business_collaboration"] = _build_plan_business_collaboration_tool()
     available["consult_business_agents"] = _build_consult_business_agents_tool(model)
     available["run_business_collaboration"] = _build_run_business_collaboration_tool(model)
+    available.update({item.name: item for item in list_integration_tools()})
     return list(available.values())
 
 
