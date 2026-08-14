@@ -18,10 +18,11 @@ from app.core.runtime_context import get_runtime_context
 from app.agents.business_bootstrap import bootstrap_business_agents
 from app.domain.plan_store import default_plan_store
 from app.domain.plans import ExecutionPlan, PlanStatus, validate_execution_plan
-from app.integrations.projections import project_action_result
+from app.integrations.projections import project_action_result, project_frontend_callback_resume
 
 
 DEFAULT_HUMAN_ACTIONS = ["approve", "reject", "edit", "clarify"]
+PROGRESS_STATUSES = {"pending", "running", "completed", "failed", "skipped"}
 
 
 def _ensure_business_runtime() -> None:
@@ -144,6 +145,30 @@ def build_human_action(
             **(payload or {}),
         },
     }
+
+
+@tool
+def update_task_progress(
+    steps: list[dict[str, Any]],
+    current_step: str | None = None,
+    summary: str | None = None,
+    *,
+    tool_call_id: Annotated[str, InjectedToolCallId],
+) -> Command:
+    """发布面向前端展示的通用任务进展。
+
+    steps 中每项可包含 id/title/status/summary/data。只输出可展示进度，不输出隐藏推理。
+    """
+
+    normalized_steps = [_normalize_progress_step(index, step) for index, step in enumerate(steps)]
+    progress = _build_task_progress(normalized_steps, current_step, summary)
+    content = json.dumps({"task_progress": progress}, ensure_ascii=False, separators=(",", ":"))
+    return Command(
+        update={
+            "metadata": {"task_progress": progress},
+            "messages": [ToolMessage(content=content, tool_call_id=tool_call_id)],
+        }
+    )
 
 
 @tool
@@ -390,7 +415,9 @@ def _frontend_callback_resume_result(
             "data": {"pendingAction": pending_payload, "frontendResult": data},
             "error_code": "FRONTEND_ACTION_REJECTED",
         }
-    return {
+    if action == "approve" and "success" not in data and "status" not in data:
+        data = {**data, "success": True}
+    result = {
         "status": "success" if action == "approve" else "updated",
         "action_id": pending_payload.get("action_id"),
         "message": resume_value.get("content") or data.get("message") or "前端已返回业务动作结果。",
@@ -399,6 +426,69 @@ def _frontend_callback_resume_result(
             "frontendResult": data,
         },
     }
+    projection = project_frontend_callback_resume(pending_payload, resume_value)
+    if projection:
+        result.update(projection)
+        if isinstance(projection.get("data"), dict):
+            result["data"] = {
+                **result.get("data", {}),
+                **projection["data"],
+            }
+    return result
+
+
+def _normalize_progress_step(index: int, step: dict[str, Any]) -> dict[str, Any]:
+    step_id = step.get("id") or step.get("step_id") or f"step-{index + 1}"
+    title = step.get("title") or step.get("name") or step.get("content") or str(step_id)
+    status = str(step.get("status") or "pending").strip().lower()
+    if status not in PROGRESS_STATUSES:
+        status = "pending"
+    normalized: dict[str, Any] = {
+        "id": str(step_id),
+        "title": str(title).strip()[:80],
+        "status": status,
+    }
+    step_summary = step.get("summary")
+    if isinstance(step_summary, str) and step_summary.strip():
+        normalized["summary"] = step_summary.strip()[:200]
+    data = step.get("data")
+    if isinstance(data, dict):
+        normalized["data"] = data
+    return normalized
+
+
+def _build_task_progress(
+    steps: list[dict[str, Any]],
+    current_step: str | None,
+    summary: str | None,
+) -> dict[str, Any]:
+    current = current_step or _current_progress_step_id(steps)
+    completed = [step["id"] for step in steps if step.get("status") == "completed"]
+    failed = next((step["id"] for step in steps if step.get("status") == "failed"), None)
+    pending_or_running = [step for step in steps if step.get("status") in {"pending", "running"}]
+    next_step = next((step["id"] for step in pending_or_running if step["id"] != current), None)
+    progress: dict[str, Any] = {
+        "steps": steps,
+        "currentStep": current,
+        "completedSteps": completed,
+        "failedStep": failed,
+        "nextStep": next_step,
+    }
+    if isinstance(summary, str) and summary.strip():
+        progress["summary"] = summary.strip()[:200]
+    return progress
+
+
+def _current_progress_step_id(steps: list[dict[str, Any]]) -> str | None:
+    running = next((step["id"] for step in steps if step.get("status") == "running"), None)
+    if running:
+        return running
+    incomplete = next((step["id"] for step in steps if step.get("status") == "pending"), None)
+    if incomplete:
+        return incomplete
+    if steps:
+        return steps[-1]["id"]
+    return None
 
 
 def _format_human_resume_for_tool(resume_value: Any) -> str:
@@ -479,6 +569,7 @@ def _slots_from_human_resume(resume_value: Any) -> dict[str, dict[str, Any]]:
 AGENT_TOOLS = [
     update_dialogue_state,
     request_human_input,
+    update_task_progress,
     list_business_actions,
     list_business_agents,
     create_execution_plan,

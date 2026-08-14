@@ -76,3 +76,73 @@ def test_normalize_event_converts_confirmation_tool_result_to_human_action_requi
     assert normalized["data"]["executeApi"] == "/order/createTempOrder"
     assert normalized["data"]["executePayload"] == {"planGuid": "plan-1"}
     assert normalized["data"]["confirmation_token"] == "token-1"
+
+
+def test_normalize_event_converts_task_progress_tool_result_to_thinking_step() -> None:
+    service = SessionService(agent=None)
+    tool_result = {
+        "task_progress": {
+            "steps": [
+                {"id": "query", "title": "查询线路杆塔数据", "status": "completed"},
+                {"id": "assemble", "title": "组装确认信息", "status": "running", "summary": "正在生成确认数据"},
+            ],
+            "currentStep": "assemble",
+            "completedSteps": ["query"],
+            "nextStep": None,
+        }
+    }
+    event = {
+        "tools": {
+            "messages": [
+                ToolMessage(
+                    content=json.dumps(tool_result, ensure_ascii=False),
+                    tool_call_id="tool-call-1",
+                )
+            ]
+        }
+    }
+
+    normalized = service._normalize_event("session-1", event)
+
+    assert normalized["type"] == "thinking_step"
+    assert normalized["session_id"] == "session-1"
+    assert normalized["content"] == "正在生成确认数据"
+    assert normalized["data"]["step_id"] == "assemble"
+    assert normalized["data"]["step_name"] == "组装确认信息"
+    assert normalized["data"]["status"] == "running"
+    assert normalized["data"]["completedSteps"] == ["query"]
+    assert normalized["data"]["steps"][0]["title"] == "查询线路杆塔数据"
+
+
+def test_normalize_event_prefers_frontend_callback_completion_over_confirmation() -> None:
+    service = SessionService(agent=None)
+    event = {
+        "tools": {
+            "messages": [
+                ToolMessage(
+                    content=json.dumps(
+                        {
+                            "status": "success",
+                            "action_id": "inspection.create_plan",
+                            "message": "巡检计划已创建成功",
+                            "data": {
+                                "pendingAction": {
+                                    "executionMode": "frontend_callback",
+                                    "actionCode": "createPlan",
+                                },
+                                "frontendResult": {"success": True, "planGuid": "plan-1"},
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    tool_call_id="tool-call-1",
+                )
+            ]
+        }
+    }
+
+    normalized = service._normalize_event("session-1", event)
+
+    assert normalized["type"] == "message"
+    assert normalized["content"] == "巡检计划已创建成功"
+    assert normalized["data"]["data"]["frontendResult"]["planGuid"] == "plan-1"

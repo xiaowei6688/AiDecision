@@ -19,6 +19,7 @@ CREATE_PLAN = ActionSpec(
         "在巡检系统中创建计划，并绑定已确认的线路和杆塔。"
         "planObjectList 必须来自 inspection_query_device_data 返回的真实 planObjectList，"
         "不得由模型自行根据线路名或杆塔名编造 deviceGuid/parentDeviceGuid。"
+        "计划创建成功后只应结束计划流程，不应自动进入工单创建。"
     ),
     system="inspection",
     inputs=[
@@ -44,7 +45,7 @@ CREATE_PLAN = ActionSpec(
 CREATE_WORK_ORDER = ActionSpec(
     action_id="inspection.create_work_order",
     title="创建巡检工单",
-    description="根据已确认的巡检计划和杆塔明细创建一张巡检工单。",
+    description="仅在用户明确要求创建工单时，基于已确认的巡检计划和杆塔明细创建一张巡检工单。",
     system="inspection",
     inputs=[
         ActionInputSpec("planGuid", description="巡检计划 GUID"),

@@ -2,6 +2,7 @@ import pytest
 
 from app.tools.base_tool import (
     call_business_action,
+    update_task_progress,
     _format_human_resume_for_tool,
     _slots_from_human_resume,
     _summary_from_human_resume,
@@ -10,8 +11,14 @@ from app.actions.schemas import ActionResult
 from app.tools.dynamic_tools import build_agent_tools
 from app.agents.state import merge_dict_state
 from app.integrations.projections import project_action_result
-from app.integrations.inspection.ui import inspection_action_result_projection
-from app.integrations.projections import register_action_result_projection
+from app.integrations.inspection.ui import (
+    inspection_action_result_projection,
+    inspection_frontend_callback_resume_projection,
+)
+from app.integrations.projections import (
+    register_action_result_projection,
+    register_frontend_callback_resume_projection,
+)
 from app.integrations.bootstrap import register_integrations, register_business_agents
 from app.actions.executor import default_action_executor
 from app.actions.policy import default_policy_engine
@@ -74,9 +81,38 @@ def test_dynamic_tools_include_business_agent_consultation() -> None:
     assert "list_business_agents" in names
     assert "plan_business_collaboration" in names
     assert "run_business_collaboration" in names
+    assert "update_task_progress" in names
     assert "inspection_query_plan_detail" in names
     assert "inspection_query_coverage" in names
     assert "inspection_build_work_order_fill_state" in names
+
+
+def test_update_task_progress_returns_generic_progress_command() -> None:
+    result = update_task_progress.invoke(
+        {
+            "name": "update_task_progress",
+            "type": "tool_call",
+            "id": "tool-call-1",
+            "args": {
+                "steps": [
+                    {"id": "query", "title": "查询数据", "status": "completed"},
+                    {"id": "confirm", "title": "生成确认信息", "status": "running"},
+                ],
+                "current_step": "confirm",
+                "summary": "正在处理",
+            },
+        }
+    )
+
+    update = result.update
+    progress = update["metadata"]["task_progress"]
+    assert progress["currentStep"] == "confirm"
+    assert progress["completedSteps"] == ["query"]
+    assert progress["steps"] == [
+        {"id": "query", "title": "查询数据", "status": "completed"},
+        {"id": "confirm", "title": "生成确认信息", "status": "running"},
+    ]
+    assert "inspection" not in str(progress)
 
 
 def test_register_business_agents_can_be_restricted() -> None:
@@ -110,6 +146,7 @@ def test_action_result_projection_defaults_to_empty_dict_without_plugins() -> No
 @pytest.mark.asyncio
 async def test_frontend_callback_action_interrupts_until_frontend_result(monkeypatch: pytest.MonkeyPatch) -> None:
     register_action_result_projection(inspection_action_result_projection)
+    register_frontend_callback_resume_projection(inspection_frontend_callback_resume_projection)
     interrupts: list[dict[str, object]] = []
 
     async def execute(**kwargs: object) -> ActionResult:
@@ -150,3 +187,6 @@ async def test_frontend_callback_action_interrupts_until_frontend_result(monkeyp
     assert result["status"] == "success"
     assert result["message"] == "前端已创建巡检计划"
     assert result["data"]["frontendResult"]["planGuid"] == "plan-1"
+    assert result["data"]["createdPlanGuid"] == "plan-1"
+    assert result["data"]["final"] is True
+    assert "明确发起创建工单" in result["data"]["nextUserAction"]

@@ -15,14 +15,22 @@ from app.integrations.inspection.adapter import InspectionAdapter
 from app.integrations.inspection.agent import inspection_agent
 from app.integrations.inspection.checks import valid_time_window
 from app.integrations.inspection.routes import router as inspection_router
-from app.integrations.inspection.ui import inspection_action_result_projection, inspection_human_interrupt_projection
+from app.integrations.inspection.ui import (
+    inspection_action_result_projection,
+    inspection_frontend_callback_resume_projection,
+    inspection_human_interrupt_projection,
+)
 from app.integrations.inspection.workflows import (
     inspection_build_work_order_fill_state,
     inspection_query_coverage,
     inspection_query_device_data,
     inspection_query_plan_detail,
 )
-from app.integrations.projections import register_action_result_projection, register_human_interrupt_projection
+from app.integrations.projections import (
+    register_action_result_projection,
+    register_frontend_callback_resume_projection,
+    register_human_interrupt_projection,
+)
 from app.integrations.tools import register_integration_tool
 
 
@@ -40,6 +48,7 @@ def register_inspection_actions(
 def register_inspection_projections() -> None:
     register_action_result_projection(inspection_action_result_projection)
     register_human_interrupt_projection(inspection_human_interrupt_projection)
+    register_frontend_callback_resume_projection(inspection_frontend_callback_resume_projection)
 
 
 def register_inspection_tools() -> None:

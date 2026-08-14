@@ -97,7 +97,7 @@ def inspection_query_device_data(parent_device_name: str, ranges: str = "全部"
 
 @tool
 def inspection_query_plan_detail(plan_id: str) -> dict[str, Any]:
-    """查询巡检计划完整详情，供后续工单规划使用。"""
+    """查询巡检计划完整详情；仅在用户明确触发工单流程或查询计划详情时使用。"""
 
     normalized = plan_id.strip()
     if not normalized:
@@ -134,7 +134,7 @@ def inspection_query_coverage(
     line_name: str,
     filters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """查询线路杆塔的机场覆盖，并返回 covered/uncovered 两组。"""
+    """查询线路杆塔的机场覆盖；仅在用户明确触发工单规划时用于分组。"""
 
     line = line_name.strip()
     if not line:
@@ -172,7 +172,7 @@ def inspection_build_work_order_fill_state(
     plan: dict[str, Any],
     coverage_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """根据计划和覆盖结果生成旧前端可直接消费的工单填充状态。"""
+    """根据计划和覆盖结果生成旧前端可消费的工单填充状态；仅在用户明确创建工单时使用。"""
 
     rows = coverage_rows or []
     details = [_row_to_detail(row) for row in rows]

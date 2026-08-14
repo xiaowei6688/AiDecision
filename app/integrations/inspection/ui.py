@@ -61,6 +61,50 @@ def inspection_human_interrupt_projection(interrupts: list[object]) -> dict[str,
     }
 
 
+def inspection_frontend_callback_resume_projection(
+    pending_payload: dict[str, Any],
+    resume_value: Any,
+) -> dict[str, object]:
+    action_id = pending_payload.get("action_id")
+    if action_id not in {"inspection.create_plan", "inspection.create_work_order"}:
+        return {}
+    if not isinstance(resume_value, dict):
+        return {}
+
+    action = resume_value.get("action")
+    if action != "approve":
+        return {}
+
+    data = resume_value.get("data") if isinstance(resume_value.get("data"), dict) else {}
+    if action_id == "inspection.create_plan":
+        plan_guid = _first_non_empty(data, "planGuid", "plan_guid", "id", "planId")
+        message = data.get("message") or resume_value.get("content") or (
+            f"巡检计划已创建成功：{plan_guid}" if plan_guid else "巡检计划已创建成功。"
+        )
+        return {
+            "status": "success",
+            "message": message,
+            "data": {
+                "pendingAction": pending_payload,
+                "frontendResult": data,
+                "createdPlanGuid": plan_guid,
+                "final": True,
+                "nextUserAction": "仅在用户明确发起创建工单时继续。",
+            },
+        }
+
+    message = data.get("message") or resume_value.get("content") or "巡检工单已创建成功。"
+    return {
+        "status": "success",
+        "message": message,
+        "data": {
+            "pendingAction": pending_payload,
+            "frontendResult": data,
+            "final": True,
+        },
+    }
+
+
 def _display_fields(action_id: str, params: dict[str, Any]) -> dict[str, Any]:
     if action_id == "inspection.create_plan":
         return {
@@ -107,3 +151,13 @@ _LEGACY_FIELD_NAMES = {
 
 def _legacy_payload(params: dict[str, Any]) -> dict[str, Any]:
     return {_LEGACY_FIELD_NAMES.get(key, key): value for key, value in params.items()}
+
+
+def _first_non_empty(value: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+        if candidate not in (None, ""):
+            return str(candidate)
+    return None

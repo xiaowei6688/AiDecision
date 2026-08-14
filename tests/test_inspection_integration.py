@@ -12,7 +12,11 @@ from app.integrations.inspection.models import CreateInspectionPlanInput, Create
 from app.integrations.inspection.adapter import InspectionAdapter
 from app.integrations.inspection.auth import InspectionAuthClient
 from app.integrations.inspection.config import InspectionSettings
-from app.integrations.inspection.ui import inspection_action_result_projection, inspection_human_interrupt_projection
+from app.integrations.inspection.ui import (
+    inspection_action_result_projection,
+    inspection_frontend_callback_resume_projection,
+    inspection_human_interrupt_projection,
+)
 from app.integrations.inspection.workflows import (
     inspection_query_coverage,
     inspection_query_device_data,
@@ -229,6 +233,31 @@ def test_inspection_human_interrupt_projection_flattens_legacy_payload() -> None
     assert projected["data"]["actionCode"] == "createTempOrder"
     assert projected["data"]["executeApi"] == "/order/createTempOrder"
     assert projected["data"]["interrupts"][0]["confirmation_token"] == "token-1"
+
+
+def test_inspection_plan_frontend_callback_finishes_plan_flow_only() -> None:
+    projected = inspection_frontend_callback_resume_projection(
+        {
+            "status": "requires_confirmation",
+            "action_id": "inspection.create_plan",
+            "actionCode": "createPlan",
+            "executePayload": {"planName": "临时计划"},
+        },
+        {
+            "action": "approve",
+            "content": "计划已创建",
+            "data": {
+                "success": True,
+                "planGuid": "plan-1",
+            },
+        },
+    )
+
+    assert projected["status"] == "success"
+    assert projected["message"] == "计划已创建"
+    assert projected["data"]["createdPlanGuid"] == "plan-1"
+    assert projected["data"]["final"] is True
+    assert "明确发起创建工单" in projected["data"]["nextUserAction"]
 
 
 def test_inspection_auth_client_fetches_and_caches_login_token(monkeypatch: pytest.MonkeyPatch) -> None:

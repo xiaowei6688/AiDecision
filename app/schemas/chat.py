@@ -21,6 +21,7 @@ class ServerEventType(StrEnum):
     ACK = "ack"
     TOKEN = "token"
     MESSAGE = "message"
+    THINKING_STEP = "thinking_step"
     DST_STATE = "dst_state"
     HUMAN_ACTION_REQUIRED = "human_action_required"
     ERROR = "error"
