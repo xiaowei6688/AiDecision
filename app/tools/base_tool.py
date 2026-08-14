@@ -313,9 +313,7 @@ def semantic_query(
     )
     return client.query(
         datasource=datasource,
-        question=question,
-        filters=filters,
-        limit=limit,
+        question=question
     )
 
 

@@ -35,6 +35,7 @@ def inspection_action_result_projection(result: ActionResult) -> dict[str, objec
         "executeApi": execute_api,
         "executeMethod": "POST",
         "executePayload": params,
+        "confirmation_token": result.data.get("confirmation_token"),
         "displayFields": _display_fields(action_id, params),
     }
 

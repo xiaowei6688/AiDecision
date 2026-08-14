@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator, Sequence
 from collections.abc import Callable
+import json
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -202,6 +203,18 @@ class SessionService:
             payload.update(projected)
             return payload
 
+        confirmation_interrupt = self._confirmation_interrupt_from_event(event)
+        if confirmation_interrupt is not None:
+            projected = project_human_interrupt([confirmation_interrupt])
+            payload = {
+                "type": "human_action_required",
+                "session_id": session_id,
+                "content": confirmation_interrupt.get("question"),
+                "data": {"interrupts": [confirmation_interrupt]},
+            }
+            payload.update(projected)
+            return payload
+
         text = self._extract_latest_ai_text(event)
         if text:
             return {
@@ -257,6 +270,57 @@ class SessionService:
                     parts.append(item)
             return "\n".join(parts)
         return str(content)
+
+    def _confirmation_interrupt_from_event(self, event: Any) -> dict[str, Any] | None:
+        for candidate in self._candidate_dicts(event):
+            if candidate.get("status") != "requires_confirmation":
+                continue
+            payload = self._confirmation_payload(candidate)
+            if not payload:
+                continue
+            return {
+                "question": candidate.get("question") or candidate.get("message") or "请确认是否继续",
+                "allowed_actions": ["approve", "reject", "edit"],
+                "recommended_action": "approve",
+                "ui_type": "confirmation",
+                "payload": payload,
+            }
+        return None
+
+    def _confirmation_payload(self, candidate: dict[str, Any]) -> dict[str, Any]:
+        data = candidate.get("data")
+        data = data if isinstance(data, dict) else {}
+        payload = {
+            key: value
+            for key, value in candidate.items()
+            if key not in {"status", "message", "data", "error_code"}
+        }
+        if "confirmation_token" in data:
+            payload["confirmation_token"] = data["confirmation_token"]
+        if "params" in data:
+            payload["params"] = data["params"]
+        return payload
+
+    def _candidate_dicts(self, value: Any) -> list[dict[str, Any]]:
+        value = self._unwrap_langgraph_value(value)
+        if isinstance(value, BaseMessage):
+            content = self._message_content_to_text(value.content)
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError:
+                return []
+            return self._candidate_dicts(parsed)
+        if isinstance(value, dict):
+            candidates = [value]
+            for item in value.values():
+                candidates.extend(self._candidate_dicts(item))
+            return candidates
+        if isinstance(value, list | tuple):
+            candidates: list[dict[str, Any]] = []
+            for item in value:
+                candidates.extend(self._candidate_dicts(item))
+            return candidates
+        return []
 
     def _jsonable(self, value: Any) -> Any:
         unwrapped = self._unwrap_langgraph_value(value)

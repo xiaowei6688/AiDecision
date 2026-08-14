@@ -198,8 +198,12 @@ def test_inspection_query_coverage_uses_integration_datasource(monkeypatch: pyte
         def __init__(self, *args: object, **kwargs: object) -> None:
             return None
 
-        def query(self, datasource: str, question: str, filters: dict[str, object] | None = None) -> dict[str, object]:
-            calls.append({"datasource": datasource, "question": question, "filters": filters})
+        def query(
+            self,
+            datasource: str,
+            question: str,
+        ) -> dict[str, object]:
+            calls.append({"datasource": datasource, "question": question})
             return {"status": "success", "data": {"rows": []}}
 
     monkeypatch.setattr(
@@ -218,7 +222,6 @@ def test_inspection_query_coverage_uses_integration_datasource(monkeypatch: pyte
         {
             "datasource": "inspection_mysql",
             "question": "查询线路名称为'线路A'的杆塔、航迹和机场覆盖情况",
-            "filters": {"line_name": "线路A"},
         }
     ]
 

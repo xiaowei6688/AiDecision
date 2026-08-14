@@ -1,4 +1,4 @@
-from app.adapters.base import BusinessAdapter
-from app.adapters.text_to_sql import TextToSqlClient
+"""Business adapter package.
 
-__all__ = ["BusinessAdapter", "TextToSqlClient"]
+Import concrete adapters from their modules to avoid circular imports during app startup.
+"""

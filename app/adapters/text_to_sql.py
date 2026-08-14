@@ -18,8 +18,6 @@ class TextToSqlClient:
         self,
         datasource: str,
         question: str,
-        filters: dict[str, Any] | None = None,
-        limit: int | None = None,
     ) -> dict[str, Any]:
         if not self._base_url:
             return {
@@ -33,10 +31,6 @@ class TextToSqlClient:
             "datasource": datasource,
             "question": question
         }
-        if filters:
-            body["filters"] = filters
-        if limit is not None:
-            body["limit"] = limit
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         req = request.Request(
             f"{self._base_url}",
