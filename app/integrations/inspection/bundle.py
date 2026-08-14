@@ -17,6 +17,7 @@ from app.integrations.inspection.registration import (
     register_inspection_tools,
 )
 from app.integrations.inspection.lifecycle import InspectionLifecycle
+from app.integrations.context import PluginContext
 
 
 class InspectionBundle:
@@ -34,6 +35,15 @@ class InspectionBundle:
         register_inspection_actions(registry, executor, policy_engine)
         register_inspection_projections()
         register_inspection_tools()
+        return inspection_routers()
+
+    def register_context(self, context: PluginContext) -> Sequence[APIRouter]:
+        register_inspection_actions(
+            context.action_registry, context.action_executor, context.policy_engine
+        )
+        register_inspection_projections(context)
+        register_inspection_tools(context)
+        register_inspection_agents(context.business_agent_registry)
         return inspection_routers()
 
     def register_business_agents(self, registry) -> None:

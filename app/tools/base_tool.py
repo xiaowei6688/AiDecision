@@ -18,7 +18,10 @@ from app.core.runtime_context import get_runtime_context
 from app.agents.business_bootstrap import bootstrap_business_agents
 from app.domain.plan_store import default_plan_store
 from app.domain.plans import ExecutionPlan, PlanStatus, validate_execution_plan
-from app.integrations.projections import project_action_result, project_frontend_callback_resume
+from app.integrations.projections import (
+    project_action_result_with_context,
+    project_frontend_callback_resume_with_context,
+)
 
 
 DEFAULT_HUMAN_ACTIONS = ["approve", "reject", "edit", "clarify"]
@@ -26,7 +29,27 @@ PROGRESS_STATUSES = {"pending", "running", "completed", "failed", "skipped"}
 
 
 def _ensure_business_runtime() -> None:
-    bootstrap_actions()
+    if get_runtime_context().plugin_context is None:
+        bootstrap_actions()
+
+
+def _plugin_context() -> Any:
+    return get_runtime_context().plugin_context
+
+
+def _action_registry() -> Any:
+    context = _plugin_context()
+    return context.action_registry if context is not None else default_action_registry
+
+
+def _action_executor() -> Any:
+    context = _plugin_context()
+    return context.action_executor if context is not None else default_action_executor
+
+
+def _business_agent_registry() -> Any:
+    context = _plugin_context()
+    return context.business_agent_registry if context is not None else bootstrap_business_agents()
 
 
 @tool
@@ -177,9 +200,9 @@ def list_business_actions(query: str = "", limit: int = 8) -> dict[str, Any]:
 
     _ensure_business_runtime()
     actions = (
-        default_action_registry.search(query, limit=limit)
+        _action_registry().search(query, limit=limit)
         if query
-        else default_action_registry.list()[:limit]
+        else _action_registry().list()[:limit]
     )
     return {
         "status": "success",
@@ -191,7 +214,7 @@ def list_business_actions(query: str = "", limit: int = 8) -> dict[str, Any]:
 def list_business_agents() -> dict[str, Any]:
     """列出可由主 Agent 调度的业务 Agent 能力目录。"""
 
-    registry = bootstrap_business_agents()
+    registry = _business_agent_registry()
     return {
         "status": "success",
         "business_agents": [agent.public_dict() for agent in registry.list()],
@@ -203,7 +226,7 @@ async def create_execution_plan(goal: str, steps: list[dict[str, Any]]) -> dict[
     """创建并校验跨系统执行计划；只返回预览，不会查询或执行任何业务动作。"""
 
     _ensure_business_runtime()
-    registry = bootstrap_business_agents()
+    registry = _business_agent_registry()
     datasources = {
         datasource
         for agent in registry.list()
@@ -211,7 +234,7 @@ async def create_execution_plan(goal: str, steps: list[dict[str, Any]]) -> dict[
     }
     try:
         plan = ExecutionPlan.model_validate({"goal": goal, "steps": steps})
-        validated = validate_execution_plan(plan, default_action_registry, datasources)
+        validated = validate_execution_plan(plan, _action_registry(), datasources)
     except (KeyError, ValueError, ValidationError) as exc:
         return {
             "status": "failed",
@@ -261,7 +284,7 @@ async def _execute_plan_step(
         session_id=runtime.session_id,
         metadata=runtime.metadata,
     )
-    action_result = await default_action_executor.execute(
+    action_result = await _action_executor().execute(
         action_id=step.action_id,
         params=step.params,
         context=context,
@@ -356,7 +379,7 @@ async def call_business_action(
         session_id=runtime.session_id,
         metadata=runtime.metadata,
     )
-    result = await default_action_executor.execute(
+    result = await _action_executor().execute(
         action_id=action_id,
         params=params,
         context=context,
@@ -377,7 +400,7 @@ def _action_result_to_dict(result: ActionResult) -> dict[str, Any]:
         "data": result.data,
         "error_code": result.error_code,
     }
-    payload.update(project_action_result(result))
+    payload.update(project_action_result_with_context(result, _plugin_context()))
     return payload
 
 
@@ -426,7 +449,9 @@ def _frontend_callback_resume_result(
             "frontendResult": data,
         },
     }
-    projection = project_frontend_callback_resume(pending_payload, resume_value)
+    projection = project_frontend_callback_resume_with_context(
+        pending_payload, resume_value, _plugin_context()
+    )
     if projection:
         result.update(projection)
         if isinstance(projection.get("data"), dict):

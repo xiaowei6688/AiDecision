@@ -24,6 +24,9 @@ inspection_agent = BusinessAgentManifest(
 创建计划或工单属于写操作，必须在建议中说明所需信息、影响和风险，等待主 Agent 走统一审批与执行流程。
 缺少普通字段时，只在 missing_information 中说明需要补充什么；不要建议进入 human_action_required。
 只有计划或工单所有字段都组装完成、即将交给旧前端确认执行时，才应触发最终确认。
+计划确认前必须先取得真实 planObjectList；工单确认前必须先取得计划详情和工单填充状态。
+字段已经齐备时，不要继续重复查询或追问普通信息，应建议主 Agent 调用 request_human_input
+向用户发起最终确认；确认通过后再进入统一动作执行或旧前端回调流程。
 跨系统场景中，明确说明对设备、无人机、飞手、机场或其他系统事实的依赖。""",
     datasources=(
         "inspection_plans",

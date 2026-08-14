@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator, Sequence
 from collections.abc import Callable
+import hashlib
 import json
 from typing import Any
 
@@ -10,7 +11,9 @@ from app.agents.state import default_dst_metadata
 from app.services.context_compressor import ContextCompressor
 from app.schemas.chat import HumanResumeRequest, ServerEventType, SessionStateResponse
 from app.core.runtime_context import RequestRuntimeContext, reset_runtime_context, set_runtime_context
-from app.integrations.projections import project_human_interrupt
+from app.integrations.projections import project_human_interrupt_with_context
+from app.integrations.tools import context_tool_step
+from app.integrations.context import PluginContext
 
 
 class SessionService:
@@ -21,10 +24,12 @@ class SessionService:
         agent: Any,
         context_compressor: ContextCompressor | None = None,
         runtime_context_provider: Callable[[str], RequestRuntimeContext] | None = None,
+        plugin_context: PluginContext | None = None,
     ) -> None:
         self._agent = agent
         self._context_compressor = context_compressor
         self._runtime_context_provider = runtime_context_provider
+        self._plugin_context = plugin_context
 
     def _config(self, session_id: str) -> dict[str, Any]:
         return {"configurable": {"thread_id": session_id}}
@@ -79,11 +84,14 @@ class SessionService:
             },
         }
         token = set_runtime_context(self._runtime_context(session_id))
+        seen_thinking_steps: set[tuple[str | None, str | None, str | None]] = set()
         try:
             async for event in self._agent.astream(
                 payload, config=self._config(session_id), stream_mode="updates"
             ):
-                yield self._normalize_event(session_id, event)
+                normalized = self._normalize_event(session_id, event)
+                if self._should_emit_stream_event(normalized, seen_thinking_steps):
+                    yield normalized
         finally:
             reset_runtime_context(token)
 
@@ -131,8 +139,9 @@ class SessionService:
                 user_roles=context.user_roles,
                 session_id=session_id,
                 metadata=context.metadata,
+                plugin_context=self._plugin_context,
             )
-        return RequestRuntimeContext(session_id=session_id)
+        return RequestRuntimeContext(session_id=session_id, plugin_context=self._plugin_context)
 
     async def get_state(self, session_id: str) -> SessionStateResponse:
         """返回最新的DST状态的紧凑可序列化视图."""
@@ -196,6 +205,10 @@ class SessionService:
         if task_progress is not None:
             return self._task_progress_event(session_id, task_progress)
 
+        tool_step = self._tool_call_step_from_event(session_id, event)
+        if tool_step is not None:
+            return tool_step
+
         frontend_callback_completion = self._frontend_callback_completion_from_event(event)
         if frontend_callback_completion is not None:
             return {
@@ -216,7 +229,10 @@ class SessionService:
 
         if isinstance(event, dict) and "__interrupt__" in event:
             interrupts = self._jsonable(event["__interrupt__"])
-            projected = project_human_interrupt(interrupts if isinstance(interrupts, list) else [interrupts])
+            projected = project_human_interrupt_with_context(
+                interrupts if isinstance(interrupts, list) else [interrupts],
+                self._plugin_context,
+            )
             payload = {
                 "type": "human_action_required",
                 "session_id": session_id,
@@ -227,7 +243,9 @@ class SessionService:
 
         confirmation_interrupt = self._confirmation_interrupt_from_event(event)
         if confirmation_interrupt is not None:
-            projected = project_human_interrupt([confirmation_interrupt])
+            projected = project_human_interrupt_with_context(
+                [confirmation_interrupt], self._plugin_context
+            )
             payload = {
                 "type": "human_action_required",
                 "session_id": session_id,
@@ -251,6 +269,75 @@ class SessionService:
             "session_id": session_id,
             "data": self._jsonable(event),
         }
+
+    def _tool_call_step_from_event(self, session_id: str, event: Any) -> dict[str, Any] | None:
+        for messages in self._message_sequences(event):
+            if not messages:
+                continue
+            latest = messages[-1]
+            if not isinstance(latest, AIMessage):
+                continue
+            tool_calls = getattr(latest, "tool_calls", None) or []
+            if not tool_calls:
+                continue
+            tool_names = [
+                str(call.get("name") or call.get("id") or "tool")
+                for call in tool_calls
+                if isinstance(call, dict)
+            ]
+            if not tool_names:
+                tool_names = ["tool"]
+            if any(self._is_human_input_tool(name) for name in tool_names):
+                return None
+            descriptions = [
+                context_tool_step(self._plugin_context, name) for name in tool_names
+            ]
+            first_description = descriptions[0]
+            return {
+                "type": ServerEventType.THINKING_STEP.value,
+                "session_id": session_id,
+                "content": first_description.summary,
+                "data": {
+                    "step_id": f"framework.thinking.{self._stable_step_token(tool_names)}",
+                    "step_name": first_description.title,
+                    "status": "running",
+                    "summary": "；".join(description.summary for description in descriptions),
+                    "summary_data": {
+                        "source": "tool_call",
+                        "stepCount": len(descriptions),
+                    },
+                    "lifecycle": False,
+                    "phase": "middle",
+                },
+            }
+        return None
+
+    def _should_emit_stream_event(
+        self,
+        event: dict[str, Any],
+        seen_thinking_steps: set[tuple[str | None, str | None, str | None]],
+    ) -> bool:
+        if event.get("type") != ServerEventType.THINKING_STEP.value:
+            return True
+        data = event.get("data")
+        data = data if isinstance(data, dict) else {}
+        key = (
+            self._stringify(data.get("status")),
+            self._stringify(event.get("content") or data.get("summary") or data.get("step_name")),
+            self._stringify(data.get("phase")),
+        )
+        if key in seen_thinking_steps:
+            return False
+        seen_thinking_steps.add(key)
+        return True
+
+    def _stable_step_token(self, tool_names: list[str]) -> str:
+        raw = "|".join(tool_names) or "tool"
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+    def _is_human_input_tool(self, tool_name: str) -> bool:
+        normalized = tool_name.replace("-", "_").lower()
+        return normalized in {"request_human_input", "human_input"} or normalized.endswith(".request_human_input")
 
     def _frontend_callback_completion_from_event(self, event: Any) -> dict[str, Any] | None:
         for candidate in self._candidate_dicts(event):

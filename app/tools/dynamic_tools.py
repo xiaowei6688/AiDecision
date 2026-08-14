@@ -16,22 +16,30 @@ from app.agents.business_agents import (
 )
 from app.agents.business_runtime import BusinessAgentInvocation, build_business_agent_runtime
 from app.tools.base_tool import AGENT_TOOLS
-from app.integrations.tools import list_integration_tools
+from app.integrations.tools import list_context_tools
+from app.integrations.context import PluginContext
 
 
-def build_agent_tools(model: BaseChatModel) -> list[Any]:
+def build_agent_tools(
+    model: BaseChatModel,
+    enabled_integrations: list[str] | None = None,
+    plugin_context: PluginContext | None = None,
+) -> list[Any]:
     """Build tools that may need runtime dependencies such as the chat model."""
 
-    bootstrap_actions()
+    if plugin_context is None:
+        bootstrap_actions(enabled_integrations)
     available = {tool.name: tool for tool in AGENT_TOOLS}
-    available["plan_business_collaboration"] = _build_plan_business_collaboration_tool()
-    available["consult_business_agents"] = _build_consult_business_agents_tool(model)
-    available["run_business_collaboration"] = _build_run_business_collaboration_tool(model)
-    available.update({item.name: item for item in list_integration_tools()})
+    available["plan_business_collaboration"] = _build_plan_business_collaboration_tool(plugin_context)
+    available["consult_business_agents"] = _build_consult_business_agents_tool(model, plugin_context)
+    available["run_business_collaboration"] = _build_run_business_collaboration_tool(model, plugin_context)
+    if plugin_context is None:
+        bootstrap_business_agents(enabled_integrations=enabled_integrations)
+    available.update({item.name: item for item in list_context_tools(plugin_context)})
     return list(available.values())
 
 
-def _build_plan_business_collaboration_tool() -> Any:
+def _build_plan_business_collaboration_tool(plugin_context: PluginContext | None = None) -> Any:
     @tool
     def plan_business_collaboration(
         task: str,
@@ -39,7 +47,11 @@ def _build_plan_business_collaboration_tool() -> Any:
     ) -> dict[str, Any]:
         """创建并校验业务 Agent 调度图；不调用 Agent，也不执行任何业务动作。"""
 
-        registry = bootstrap_business_agents()
+        registry = (
+            plugin_context.business_agent_registry
+            if plugin_context is not None
+            else bootstrap_business_agents()
+        )
         try:
             plan = BusinessCollaborationPlan.model_validate({"task": task, "steps": steps})
             validated = validate_collaboration_plan(plan, registry)
@@ -59,7 +71,9 @@ def _build_plan_business_collaboration_tool() -> Any:
     return plan_business_collaboration
 
 
-def _build_consult_business_agents_tool(model: BaseChatModel) -> Any:
+def _build_consult_business_agents_tool(
+    model: BaseChatModel, plugin_context: PluginContext | None = None
+) -> Any:
     @tool
     async def consult_business_agents(
         business_ids: list[str],
@@ -72,7 +86,11 @@ def _build_consult_business_agents_tool(model: BaseChatModel) -> Any:
         负责汇总意见、消解冲突并通过统一工具完成真实查询或动作执行。
         """
 
-        registry = bootstrap_business_agents()
+        registry = (
+            plugin_context.business_agent_registry
+            if plugin_context is not None
+            else bootstrap_business_agents()
+        )
         selected: list[BusinessAgentManifest] = []
         unknown: list[str] = []
         for business_id in dict.fromkeys(business_ids):
@@ -88,9 +106,21 @@ def _build_consult_business_agents_tool(model: BaseChatModel) -> Any:
                 "available_business_agents": [item.public_dict() for item in registry.list()],
             }
 
-        bootstrap_actions()
+        if plugin_context is None:
+            bootstrap_actions()
         advice = await asyncio.gather(
-            *[_consult_business_agent(model, agent, task, context or {}) for agent in selected]
+            *[
+                _consult_business_agent(
+                    model,
+                    agent,
+                    task,
+                    context or {},
+                    plugin_context.action_registry
+                    if plugin_context is not None
+                    else default_action_registry,
+                )
+                for agent in selected
+            ]
         )
         return {
             "status": "success",
@@ -101,7 +131,9 @@ def _build_consult_business_agents_tool(model: BaseChatModel) -> Any:
     return consult_business_agents
 
 
-def _build_run_business_collaboration_tool(model: BaseChatModel) -> Any:
+def _build_run_business_collaboration_tool(
+    model: BaseChatModel, plugin_context: PluginContext | None = None
+) -> Any:
     @tool
     async def run_business_collaboration(
         task: str,
@@ -110,7 +142,11 @@ def _build_run_business_collaboration_tool(model: BaseChatModel) -> Any:
     ) -> dict[str, Any]:
         """按已校验调度图咨询业务 Agent；无依赖 Agent 并发，后续 Agent 接收前置建议。"""
 
-        registry = bootstrap_business_agents()
+        registry = (
+            plugin_context.business_agent_registry
+            if plugin_context is not None
+            else bootstrap_business_agents()
+        )
         try:
             plan = BusinessCollaborationPlan.model_validate({"task": task, "steps": steps})
             validated = validate_collaboration_plan(plan, registry)
@@ -122,7 +158,13 @@ def _build_run_business_collaboration_tool(model: BaseChatModel) -> Any:
                 "message": str(exc),
             }
 
-        bootstrap_actions()
+        if plugin_context is None:
+            bootstrap_actions()
+        action_registry = (
+            plugin_context.action_registry
+            if plugin_context is not None
+            else default_action_registry
+        )
         advice_by_agent: dict[str, dict[str, Any]] = {}
         for wave in waves:
             results = await asyncio.gather(*[
@@ -138,6 +180,7 @@ def _build_run_business_collaboration_tool(model: BaseChatModel) -> Any:
                             for dependency in step.depends_on
                         },
                     },
+                    action_registry,
                 )
                 for step in wave
             ])
@@ -157,10 +200,11 @@ async def _consult_business_agent(
     agent: BusinessAgentManifest,
     task: str,
     context: dict[str, Any],
+    action_registry: Any = default_action_registry,
 ) -> dict[str, Any]:
     actions = [
         action.public_dict()
-        for action in default_action_registry.list()
+        for action in action_registry.list()
         if any(action.action_id.startswith(prefix) for prefix in agent.action_prefixes)
     ]
     try:

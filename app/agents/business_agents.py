@@ -154,6 +154,11 @@ class BusinessAgentRegistry:
         except KeyError as exc:
             raise KeyError(f"Unknown business Agent: {business_id}") from exc
 
+    def contains(self, business_id: str) -> bool:
+        """Return whether a plugin capability has already been registered."""
+
+        return business_id in self._agents
+
     def list(self) -> list[BusinessAgentManifest]:
         return list(self._agents.values())
 

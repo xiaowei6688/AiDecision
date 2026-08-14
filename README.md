@@ -33,9 +33,16 @@ app/integrations/contract/
   checks.py    # 确定性的权限、参数、业务规则校验
 ```
 
-启动时由 `app/integrations/bootstrap.py` 统一注册。主 Agent 只通过
+启动时由 `app/integrations/bootstrap.py` 统一发现和注册。新插件通过
+`bundle.register_context(PluginContext)` 完成注册；主 Agent 只通过
 `list_business_actions`、`semantic_query`、`call_business_action` 工作，不直接感知
 任何业务系统的真实接口。
+
+每个 `bundle` 就是一个插件入口。应用创建时会为该实例建立独立的 `PluginContext`，插件
+在其中注册动作、适配器、工具、业务 Agent、路由和事件投影；应用配置中的
+`enabled_integrations` 会同时约束这些能力。核心运行时只消费注册表中的通用协议，不在
+`app/agents`、`app/services` 或 `app/api` 中写业务判断。多个应用实例在同一进程中也不会
+共享插件能力。
 
 ## 业务 Agent 编排
 
@@ -64,6 +71,23 @@ app/integrations/contract/
 负责真实受控执行。框架通过 `app/integrations/<system>/bundle.py` 暴露的 `bundle` 自动发现集成。
 接入真实系统时新增完整 integration 包，并在 bundle 中注册本地 BusinessAgentManifest。
 不要把业务 Agent 做成新的用户会话根 Agent。
+
+### 新插件的职责边界
+
+```text
+app/integrations/inventory/
+  bundle.py         # 插件唯一注册入口
+  agent.py          # 领域约束和结构化建议
+  workflows.py      # 查询、组装和确定性的领域流程
+  actions.py        # 可执行动作契约
+  adapter.py        # 调用真实系统
+  models.py         # 该系统的输入/输出模型
+  ui.py             # 该系统的前端事件投影（如需要）
+```
+
+`agent.py` 可以告诉主 Agent“这个领域能处理什么、需要什么数据、建议什么动作”，但不应
+直接操作其他插件或改变 WebSocket 协议。真实业务处理放在该插件的 workflow、action 和
+adapter 中；通用框架只负责发现插件、调度建议、校验动作、处理确认/恢复和发送统一事件。
 
 业务语义模型不放在 Agent 协议中：共享引用模型放在 `app/domain/`，各系统命令模型放在
 `app/integrations/<system>/models.py`。ActionSpec 引用对应命令模型，Executor 会在调用 Adapter

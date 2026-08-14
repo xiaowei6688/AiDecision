@@ -35,6 +35,11 @@ uv run uvicorn app.main:app --reload
 
 主入口是 `app.main:app`。启动后会自动发现 `app.integrations.<name>.bundle`，并按 `enabled_integrations` 加载。
 
+插件加载顺序是：应用边界为每个 FastAPI 应用创建独立的 `PluginContext`，发现 `bundle`，
+把动作/适配器/工具/事件投影和业务 Agent 注册到该上下文，然后主 Agent 从该上下文构建
+工具列表。主 Agent 不导入某个具体业务包；业务逻辑应放在对应的
+`app/integrations/<name>/` 中。同一进程内多个应用实例不会共享插件能力。
+
 常用接口：
 
 - `GET /health`
@@ -66,7 +71,27 @@ uv run uvicorn app.main:app --reload
 - `app/integrations/<name>/routes.py`
 - `app/integrations/<name>/bundle.py`
 
-然后在 `bundle.py` 暴露一个 `bundle` 对象即可，框架会自动发现。
+然后在 `bundle.py` 暴露一个 `bundle` 对象即可，框架会自动发现。新插件应实现：
+
+```python
+class InventoryBundle:
+    name = "inventory"
+
+    def register_context(self, context: PluginContext) -> list[APIRouter]:
+        context.action_registry.register(INVENTORY_ACTION)
+        context.action_executor.register_adapter("inventory", InventoryAdapter())
+        context.register_tool(query_inventory)
+        context.business_agent_registry.register(inventory_agent)
+        return [inventory_router]
+```
+
+`register_context` 是新插件的正式入口。旧的 `register(registry, executor, policy_engine)`
+仅用于兼容尚未迁移的插件。
+
+新业务的完整流程建议保持在插件内部：查询和数据组装放 `workflows.py`，业务写操作的
+参数模型放 `models.py`，动作契约放 `actions.py`，真实上游调用放 `adapter.py`。如果前端
+事件格式或 `actionResult` 语义不同，在插件中注册 projection/handler；不要把这些字段
+条件判断加到通用 `SessionService` 或 `WebSocket` 中。
 
 ## 业务系统 token
 

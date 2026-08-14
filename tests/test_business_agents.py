@@ -15,12 +15,41 @@ from app.agents.business_runtime import (
     build_business_agent_runtime,
 )
 from app.tools.dynamic_tools import _consult_business_agent
+from app.integrations.bootstrap import IntegrationManager
+from app.integrations.context import PluginContext
 
 
 def test_framework_registers_the_inspection_business_agent() -> None:
     registry = bootstrap_business_agents(BusinessAgentRegistry())
 
     assert [agent.business_id for agent in registry.list()] == ["inspection"]
+
+
+def test_disabled_plugin_is_not_registered() -> None:
+    registry = bootstrap_business_agents(
+        BusinessAgentRegistry(),
+        enabled_integrations=["inventory"],
+    )
+
+    assert registry.list() == []
+
+
+def test_plugin_contexts_are_isolated_per_application() -> None:
+    inspection_context = PluginContext()
+    IntegrationManager(["inspection"]).register_context(inspection_context)
+
+    empty_context = PluginContext()
+    IntegrationManager(["inventory"]).register_context(empty_context)
+
+    assert inspection_context.business_agent_registry.contains("inspection")
+    assert not empty_context.business_agent_registry.contains("inspection")
+    assert inspection_context.action_registry.get("inspection.create_plan")
+    with pytest.raises(KeyError):
+        empty_context.action_registry.get("inspection.create_plan")
+    assert inspection_context.integration_tools
+    assert empty_context.integration_tools == []
+    assert inspection_context.action_result_projections
+    assert empty_context.action_result_projections == []
 
 
 def test_business_agent_registry_rejects_duplicate_ids() -> None:

@@ -94,7 +94,9 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
 
             if client_event.type == ClientEventType.ACTION_RESULT:
                 try:
-                    resume_request = action_result_to_resume_request(client_event)
+                    resume_request = action_result_to_resume_request(
+                        client_event, websocket.app.state.plugin_context
+                    )
                 except ValueError as exc:
                     await _send_error(websocket, event_session_id, "unsupported_action_result", str(exc))
                     continue

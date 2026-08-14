@@ -29,12 +29,23 @@ from app.integrations.projections import (
     register_action_result_projection,
     register_human_interrupt_projection,
 )
+from app.integrations.tools import tool_step
 
 
 def test_inspection_actions_are_confirmed_writes() -> None:
     assert CREATE_PLAN.confirmation.required
     assert CREATE_WORK_ORDER.confirmation.required
     assert CREATE_WORK_ORDER.executor.adapter == "inspection"
+
+
+def test_inspection_registers_user_friendly_tool_steps() -> None:
+    from app.integrations.inspection.registration import register_inspection_tools
+
+    register_inspection_tools()
+
+    step = tool_step("inspection_query_device_data")
+    assert step.title == "核对线路杆塔台账"
+    assert step.summary == "正在按线路和范围核对杆塔 UID、名称、专业及所属线路"
 
 
 def test_inspection_work_order_requires_a_drone_for_drone_method() -> None:

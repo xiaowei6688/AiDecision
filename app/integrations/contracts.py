@@ -1,4 +1,9 @@
-"""Generic integration bundle contracts."""
+"""Generic plugin contracts for business integrations.
+
+An integration bundle is the framework's plugin boundary.  Business code may
+register capabilities here, but the core runtime only sees registries and
+protocol-compatible callbacks.
+"""
 
 from __future__ import annotations
 
@@ -10,9 +15,26 @@ from fastapi import APIRouter
 from app.actions.executor import BusinessActionExecutor
 from app.actions.policy import PolicyEngine
 from app.actions.registry import ActionRegistry
+from app.integrations.context import PluginContext
+
+
+class PluginBundle(Protocol):
+    """Primary contract implemented by every business plugin."""
+
+    name: str
+
+    def register_context(self, context: PluginContext) -> Sequence[APIRouter]:
+        """Register all capabilities into one application-scoped context."""
+
+    async def startup(self) -> None:
+        ...
+
+    async def shutdown(self) -> None:
+        ...
 
 
 class IntegrationBundle(Protocol):
+    """Legacy registration contract kept for older integrations."""
     name: str
 
     def register(

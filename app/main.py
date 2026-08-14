@@ -5,7 +5,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents.main_agent import build_main_agent
-from app.actions.executor import default_action_executor
 from app.api.routes import router as http_router
 from app.api.websocket import router as websocket_router
 from app.integrations.bootstrap import IntegrationManager
@@ -16,6 +15,7 @@ from app.core.logging import configure_logging
 from app.services.context_compressor import ContextCompressor
 from app.services.session_service import SessionService
 from app.domain.plan_store import default_plan_store
+from app.integrations.context import PluginContext
 
 
 def create_app(
@@ -29,12 +29,13 @@ def create_app(
 
     runtime_settings = settings or get_settings()
     integration_manager = IntegrationManager(runtime_settings.enabled_integrations)
+    plugin_context = PluginContext()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         configure_logging(runtime_settings.log_level)
         app.state.settings = runtime_settings
-        default_action_executor.configure_confirmation(
+        plugin_context.action_executor.configure_confirmation(
             runtime_settings.confirmation_secret.get_secret_value(),
             runtime_settings.confirmation_ttl_seconds,
         )
@@ -49,20 +50,23 @@ def create_app(
             async with create_postgres_checkpointer(runtime_settings) as checkpointer:
                 async with create_postgres_durable_state(runtime_settings.database_url or "") as durable_state:
                     app.state.session_access = SessionAccessStore(durable_state=durable_state)
-                    default_action_executor.set_durable_state(durable_state)
+                    plugin_context.action_executor.set_durable_state(durable_state)
                     default_plan_store.set_durable_state(durable_state)
                     context_compressor = ContextCompressor(
                         recent_messages=runtime_settings.context_recent_messages,
                         summary_max_chars=runtime_settings.context_summary_max_chars,
                     )
-                    agent = build_main_agent(runtime_settings, checkpointer)
+                    agent = build_main_agent(
+                        runtime_settings, checkpointer, plugin_context
+                    )
                     app.state.session_service = SessionService(
                         agent,
                         context_compressor,
                         runtime_context_provider=app.state.session_access.context,
+                        plugin_context=plugin_context,
                     )
                     yield
-                    default_action_executor.set_durable_state(None)
+                    plugin_context.action_executor.set_durable_state(None)
                     default_plan_store.set_durable_state(None)
         finally:
             await integration_manager.shutdown()
@@ -73,6 +77,7 @@ def create_app(
         allow_unknown=runtime_settings.environment == "development"
     )
     app.state.settings = runtime_settings
+    app.state.plugin_context = plugin_context
     app.add_middleware(
         CORSMiddleware,
         allow_origins=runtime_settings.allowed_origins,
@@ -82,14 +87,7 @@ def create_app(
     )
     app.include_router(http_router)
     app.include_router(websocket_router)
-    from app.actions.policy import default_policy_engine
-    from app.actions.registry import default_action_registry
-
-    for router in integration_manager.register_integrations(
-        default_action_registry,
-        default_action_executor,
-        default_policy_engine,
-    ):
+    for router in integration_manager.register_context(plugin_context):
         app.include_router(router)
     return app
 

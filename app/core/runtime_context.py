@@ -11,6 +11,7 @@ class RequestRuntimeContext:
     user_roles: tuple[str, ...] = ()
     session_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    plugin_context: Any = None
 
 
 _runtime_context: ContextVar[RequestRuntimeContext] = ContextVar(

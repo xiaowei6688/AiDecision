@@ -29,6 +29,16 @@ def project_action_result(result: ActionResult) -> dict[str, object]:
     return payload
 
 
+def project_action_result_with_context(
+    result: ActionResult, context: Any | None
+) -> dict[str, object]:
+    projections = context.action_result_projections if context is not None else _action_result_projections
+    payload: dict[str, object] = {}
+    for projection in projections:
+        payload.update(projection(result))
+    return payload
+
+
 def register_human_interrupt_projection(projection: HumanInterruptProjection) -> None:
     if projection in _human_interrupt_projections:
         return
@@ -38,6 +48,16 @@ def register_human_interrupt_projection(projection: HumanInterruptProjection) ->
 def project_human_interrupt(interrupts: list[object]) -> dict[str, object]:
     payload: dict[str, object] = {}
     for projection in _human_interrupt_projections:
+        payload.update(projection(interrupts))
+    return payload
+
+
+def project_human_interrupt_with_context(
+    interrupts: list[object], context: Any | None
+) -> dict[str, object]:
+    projections = context.human_interrupt_projections if context is not None else _human_interrupt_projections
+    payload: dict[str, object] = {}
+    for projection in projections:
         payload.update(projection(interrupts))
     return payload
 
@@ -54,5 +74,15 @@ def project_frontend_callback_resume(
 ) -> dict[str, object]:
     payload: dict[str, object] = {}
     for projection in _frontend_callback_resume_projections:
+        payload.update(projection(pending_payload, resume_value))
+    return payload
+
+
+def project_frontend_callback_resume_with_context(
+    pending_payload: dict[str, Any], resume_value: Any, context: Any | None
+) -> dict[str, object]:
+    projections = context.frontend_callback_projections if context is not None else _frontend_callback_resume_projections
+    payload: dict[str, object] = {}
+    for projection in projections:
         payload.update(projection(pending_payload, resume_value))
     return payload
