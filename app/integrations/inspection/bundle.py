@@ -16,10 +16,14 @@ from app.integrations.inspection.registration import (
     register_inspection_projections,
     register_inspection_tools,
 )
+from app.integrations.inspection.lifecycle import InspectionLifecycle
 
 
 class InspectionBundle:
     name = "inspection"
+
+    def __init__(self) -> None:
+        self._lifecycle = InspectionLifecycle()
 
     def register(
         self,
@@ -34,6 +38,12 @@ class InspectionBundle:
 
     def register_business_agents(self, registry) -> None:
         register_inspection_agents(registry)
+
+    async def startup(self) -> None:
+        await self._lifecycle.startup()
+
+    async def shutdown(self) -> None:
+        await self._lifecycle.shutdown()
 
 
 bundle = InspectionBundle()

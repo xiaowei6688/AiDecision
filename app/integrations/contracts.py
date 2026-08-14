@@ -25,3 +25,9 @@ class IntegrationBundle(Protocol):
 
     def register_business_agents(self, registry: Any) -> None:
         ...
+
+    async def startup(self) -> None:
+        ...
+
+    async def shutdown(self) -> None:
+        ...

@@ -9,7 +9,11 @@ from app.integrations.inspection.notifications import (
 )
 from app.integrations.inspection.checks import valid_time_window
 from app.integrations.inspection.models import CreateInspectionWorkOrderInput
+from app.integrations.inspection.adapter import InspectionAdapter
+from app.integrations.inspection.auth import InspectionAuthClient
+from app.integrations.inspection.config import InspectionSettings
 from app.integrations.inspection.ui import inspection_action_result_projection
+from app.integrations.inspection.workflows import inspection_query_plan_detail
 from app.actions.schemas import ActionResult
 from app.integrations.projections import register_action_result_projection, project_action_result
 
@@ -67,6 +71,123 @@ def test_inspection_confirmation_projection_is_integration_owned() -> None:
     register_action_result_projection(inspection_action_result_projection)
     assert inspection_action_result_projection(result)["actionCode"] == "createTempOrder"
     assert project_action_result(result)["executeApi"] == "/order/createTempOrder"
+
+
+def test_inspection_auth_client_fetches_and_caches_login_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class Response:
+        text = '{"access_token":"login-token"}'
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"access_token": "login-token"}
+
+    def post(url: str, **kwargs: object) -> Response:
+        calls.append({"url": url, **kwargs})
+        return Response()
+
+    monkeypatch.setattr("httpx.post", post)
+    settings = InspectionSettings(
+        _env_file=None,
+        auth_login_url="http://inspection.local/oauth/token",
+        auth_username="user",
+        auth_password="password",
+        basic_auth="basic-secret",
+        tenant_id="tenant-1",
+    )
+    client = InspectionAuthClient(settings)
+
+    headers = client.headers_sync()
+    cached_headers = client.headers_sync()
+
+    assert headers["allcore-auth"] == "bearer login-token"
+    assert headers["Authorization"] == "Basic basic-secret"
+    assert headers["Tenant-Id"] == "tenant-1"
+    assert cached_headers["allcore-auth"] == "bearer login-token"
+    assert len(calls) == 1
+    assert calls[0]["url"] == "http://inspection.local/oauth/token"
+    assert calls[0]["params"] == {
+        "tenantId": "tenant-1",
+        "username": "user",
+        "password": "password",
+        "grant_type": "password",
+        "type": "account",
+        "scope": "all",
+    }
+
+
+def test_inspection_plan_detail_uses_allcore_auth_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class AuthClient:
+        def headers_sync(self) -> dict[str, str]:
+            return {"allcore-auth": "bearer static-token", "Tenant-Id": "tenant-1"}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"data": {"planGuid": "plan-1"}}
+
+    def post(url: str, **kwargs: object) -> Response:
+        calls.append({"url": url, **kwargs})
+        return Response()
+
+    monkeypatch.setattr(
+        "app.integrations.inspection.workflows.get_inspection_settings",
+        lambda: InspectionSettings(
+            _env_file=None,
+            plan_detail_url="http://inspection.local/plan/detail",
+            api_timeout_seconds=12,
+        ),
+    )
+    monkeypatch.setattr("app.integrations.inspection.workflows.get_inspection_auth_client", lambda: AuthClient())
+    monkeypatch.setattr("httpx.post", post)
+
+    result = inspection_query_plan_detail.invoke({"plan_id": "plan-1"})
+
+    assert result == {"ok": True, "planId": "plan-1", "plan": {"planGuid": "plan-1"}}
+    assert calls == [
+        {
+            "url": "http://inspection.local/plan/detail",
+            "json": {"id": "plan-1"},
+            "headers": {"allcore-auth": "bearer static-token", "Tenant-Id": "tenant-1"},
+            "timeout": 12.0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_inspection_adapter_returns_frontend_callback_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_if_http_client_is_used(*args: object, **kwargs: object) -> None:
+        raise AssertionError("inspection write actions must be executed by the frontend")
+
+    monkeypatch.setattr("httpx.AsyncClient", fail_if_http_client_is_used)
+    result = await InspectionAdapter().invoke(
+        "create_work_order",
+        {
+            "plan_guid": "plan-1",
+            "inspection_method": "dock",
+            "start_date": "2026-08-14 08:00:00",
+            "end_date": "2026-08-14 10:00:00",
+        },
+        ActionExecutionContext(session_id="session-1"),
+    )
+
+    assert result["executionMode"] == "frontend_callback"
+    assert result["actionCode"] == "createTempOrder"
+    assert result["executeApi"] == "/order/createTempOrder"
+    assert result["executeMethod"] == "POST"
+    assert result["executePayload"] == {
+        "planGuid": "plan-1",
+        "inspectionMethod": "dock",
+        "startDate": "2026-08-14 08:00:00",
+        "endDate": "2026-08-14 10:00:00",
+    }
 
 
 def test_inspection_notification_builds_legacy_event_payload() -> None:

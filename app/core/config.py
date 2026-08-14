@@ -40,33 +40,6 @@ class Settings(BaseSettings):
     )
     text_to_sql_timeout_seconds: float = Field(default=30.0, gt=0.0)
 
-    inspection_api_base_url: str | None = Field(
-        default=None,
-        description="Inspection system API base URL.",
-    )
-    inspection_api_timeout_seconds: float = Field(default=30.0, gt=0.0)
-    inspection_plan_detail_url: str | None = Field(default=None)
-    inspection_auth_token: str | None = Field(
-        default=None,
-        description="Static AllCore bearer token for the inspection system.",
-    )
-    inspection_auth_login_url: str | None = Field(
-        default=None,
-        description="AllCore OAuth token endpoint for the inspection system.",
-    )
-    inspection_auth_username: str | None = None
-    inspection_auth_password: str | None = None
-    inspection_auth_grant_type: str = "password"
-    inspection_auth_type: str = "account"
-    inspection_auth_scope: str = "all"
-    inspection_basic_auth: str | None = Field(
-        default=None,
-        description="Optional upstream Basic authorization value.",
-    )
-    inspection_tenant_id: str | None = None
-    inspection_token_ttl_seconds: int = Field(default=7200, gt=0)
-    inspection_token_refresh_before_seconds: int = Field(default=300, ge=0)
-
     context_recent_messages: int = Field(
         default=20,
         ge=4,

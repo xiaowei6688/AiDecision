@@ -38,6 +38,24 @@ class IntegrationManager:
             if register is not None:
                 register(registry)
 
+    async def startup(self) -> None:
+        for bundle in self._discover_enabled_bundles():
+            startup = getattr(bundle, "startup", None)
+            if startup is not None:
+                await startup()
+
+    async def shutdown(self) -> None:
+        for bundle in self._discover_enabled_bundles():
+            shutdown = getattr(bundle, "shutdown", None)
+            if shutdown is not None:
+                await shutdown()
+
+    def _discover_enabled_bundles(self) -> Iterable[IntegrationBundle]:
+        for bundle in self._discover_bundles():
+            if self._enabled and bundle.name not in self._enabled:
+                continue
+            yield bundle
+
     def _discover_bundles(self) -> Iterable[IntegrationBundle]:
         package = importlib.import_module("app.integrations")
         for module_info in pkgutil.iter_modules(package.__path__):

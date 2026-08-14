@@ -8,6 +8,8 @@ from langchain_core.tools import tool
 
 from app.adapters.text_to_sql import TextToSqlClient
 from app.core.config import get_settings
+from app.integrations.inspection.auth import InspectionAuthError, get_inspection_auth_client
+from app.integrations.inspection.config import get_inspection_settings
 
 
 PLAN_TYPES = {
@@ -26,14 +28,23 @@ def inspection_query_plan_detail(plan_id: str) -> dict[str, Any]:
     normalized = plan_id.strip()
     if not normalized:
         return _error("missing_input", "计划 ID 不能为空")
-    settings = get_settings()
-    endpoint = settings.inspection_plan_detail_url
+    settings = get_inspection_settings()
+    endpoint = settings.plan_detail_url
     if not endpoint:
         return _error("config_error", "未配置 INSPECTION_PLAN_DETAIL_URL")
     try:
+        headers = get_inspection_auth_client().headers_sync()
+    except InspectionAuthError as exc:
+        return _error("config_error", f"获取 inspection AllCore token 失败，无法查询计划详情：{exc}")
+    try:
         import httpx
 
-        response = httpx.post(endpoint, json={"id": normalized}, timeout=settings.inspection_api_timeout_seconds)
+        response = httpx.post(
+            endpoint,
+            json={"id": normalized},
+            headers=headers,
+            timeout=settings.api_timeout_seconds,
+        )
         response.raise_for_status()
         payload = response.json()
     except (httpx.HTTPError, ValueError) as exc:

@@ -8,7 +8,7 @@ from app.agents.main_agent import build_main_agent
 from app.actions.executor import default_action_executor
 from app.api.routes import router as http_router
 from app.api.websocket import router as websocket_router
-from app.integrations.bootstrap import register_integrations
+from app.integrations.bootstrap import IntegrationManager
 from app.core.checkpoint import create_postgres_checkpointer
 from app.core.durable_state import create_postgres_durable_state
 from app.core.config import Settings, get_settings
@@ -28,6 +28,7 @@ def create_app(
     """
 
     runtime_settings = settings or get_settings()
+    integration_manager = IntegrationManager(runtime_settings.enabled_integrations)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -37,30 +38,34 @@ def create_app(
             runtime_settings.confirmation_secret.get_secret_value(),
             runtime_settings.confirmation_ttl_seconds,
         )
+        await integration_manager.startup()
 
-        if session_service is not None:
-            app.state.session_service = session_service
-            yield
-            return
-
-        async with create_postgres_checkpointer(runtime_settings) as checkpointer:
-            async with create_postgres_durable_state(runtime_settings.database_url or "") as durable_state:
-                app.state.session_access = SessionAccessStore(durable_state=durable_state)
-                default_action_executor.set_durable_state(durable_state)
-                default_plan_store.set_durable_state(durable_state)
-                context_compressor = ContextCompressor(
-                    recent_messages=runtime_settings.context_recent_messages,
-                    summary_max_chars=runtime_settings.context_summary_max_chars,
-                )
-                agent = build_main_agent(runtime_settings, checkpointer)
-                app.state.session_service = SessionService(
-                    agent,
-                    context_compressor,
-                    runtime_context_provider=app.state.session_access.context,
-                )
+        try:
+            if session_service is not None:
+                app.state.session_service = session_service
                 yield
-                default_action_executor.set_durable_state(None)
-                default_plan_store.set_durable_state(None)
+                return
+
+            async with create_postgres_checkpointer(runtime_settings) as checkpointer:
+                async with create_postgres_durable_state(runtime_settings.database_url or "") as durable_state:
+                    app.state.session_access = SessionAccessStore(durable_state=durable_state)
+                    default_action_executor.set_durable_state(durable_state)
+                    default_plan_store.set_durable_state(durable_state)
+                    context_compressor = ContextCompressor(
+                        recent_messages=runtime_settings.context_recent_messages,
+                        summary_max_chars=runtime_settings.context_summary_max_chars,
+                    )
+                    agent = build_main_agent(runtime_settings, checkpointer)
+                    app.state.session_service = SessionService(
+                        agent,
+                        context_compressor,
+                        runtime_context_provider=app.state.session_access.context,
+                    )
+                    yield
+                    default_action_executor.set_durable_state(None)
+                    default_plan_store.set_durable_state(None)
+        finally:
+            await integration_manager.shutdown()
 
     app = FastAPI(title=runtime_settings.app_name, lifespan=lifespan)
     from app.core.session_access import SessionAccessStore
@@ -80,11 +85,10 @@ def create_app(
     from app.actions.policy import default_policy_engine
     from app.actions.registry import default_action_registry
 
-    for router in register_integrations(
+    for router in integration_manager.register_integrations(
         default_action_registry,
         default_action_executor,
         default_policy_engine,
-        runtime_settings.enabled_integrations,
     ):
         app.include_router(router)
     return app
