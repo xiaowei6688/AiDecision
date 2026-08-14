@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from langchain_core.tools import tool
 
+from app.integrations.inspection.models import normalize_plan_object
 from app.adapters.text_to_sql import TextToSqlClient
 from app.core.config import get_settings
 from app.integrations.inspection.auth import InspectionAuthError, get_inspection_auth_client
@@ -19,6 +21,78 @@ PLAN_TYPES = {
     "4": "日计划",
     "5": "临时计划",
 }
+
+
+@tool
+def inspection_query_device_data(parent_device_name: str, ranges: str = "全部") -> dict[str, Any]:
+    """按旧巡检系统逻辑查询线路杆塔，并确定性组装 create_plan 所需的 planObjectList。
+
+    创建巡检计划前必须先调用本工具，禁止由模型自行编造 deviceGuid/parentDeviceGuid。
+    """
+
+    parent_name = parent_device_name.strip()
+    normalized_ranges = ranges.strip() or "全部"
+    if not parent_name:
+        return _error("missing_input", "线路名称不能为空")
+
+    settings = get_settings()
+    inspection_settings = get_inspection_settings()
+    question = f"查询{parent_name}线路下{normalized_ranges}的杆塔uid、杆塔名称、杆塔专业、线路uid、线路名称"
+    result = TextToSqlClient(
+        settings.text_to_sql_base_url,
+        settings.text_to_sql_timeout_seconds,
+    ).query(
+        datasource=inspection_settings.text_to_sql_datasource,
+        question=question,
+    )
+    if result.get("status") != "success":
+        return result
+
+    rows = _rows_from_text2sql_result(result)
+    invalid_range_message = _tower_range_invalid_message(parent_name, normalized_ranges, rows)
+    if invalid_range_message is not None:
+        return {
+            "ok": False,
+            "errorCode": "invalid_tower_range",
+            "error": invalid_range_message,
+            "retryable": False,
+            "question": question,
+            "rows": rows,
+            "planObjectList": [],
+        }
+
+    plan_object_list = []
+    skipped_rows = []
+    for row in rows:
+        plan_object = normalize_plan_object(row)
+        if not _complete_plan_object(plan_object):
+            skipped_rows.append(row)
+            continue
+        plan_object_list.append(plan_object)
+
+    if not plan_object_list:
+        return {
+            "ok": False,
+            "errorCode": "empty_plan_objects",
+            "error": "未查询到可用于创建计划的真实杆塔数据，请核实线路名称或杆塔范围。",
+            "retryable": False,
+            "question": question,
+            "rows": rows,
+            "planObjectList": [],
+            "skippedRows": skipped_rows,
+        }
+
+    return {
+        "ok": True,
+        "lineName": parent_name,
+        "ranges": normalized_ranges,
+        "question": question,
+        "rows": rows,
+        "planObjectList": plan_object_list,
+        "count": len(plan_object_list),
+        "skippedRows": skipped_rows,
+        "summary": f"已获取 {len(plan_object_list)} 条杆塔数据，创建计划时请直接使用 planObjectList。",
+    }
 
 
 @tool
@@ -177,6 +251,76 @@ def _row_to_detail(row: dict[str, Any]) -> dict[str, Any] | None:
         "dockName": row.get("dockName") or row.get("airportName") or row.get("airport_name") or "",
         "longitude": row.get("longitude") or row.get("lng") or "",
     }
+
+
+def _rows_from_text2sql_result(result: dict[str, Any]) -> list[dict[str, Any]]:
+    data = result.get("data")
+    rows = _find_rows(data)
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _complete_plan_object(item: dict[str, Any]) -> bool:
+    return all(
+        not (item.get(key) is None or (isinstance(item.get(key), str) and item.get(key).strip() == ""))
+        for key in ("deviceGuid", "deviceName", "major", "parentDeviceGuid", "parentDeviceName")
+    )
+
+
+def _find_rows(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if not isinstance(value, dict):
+        return []
+    rows = value.get("rows")
+    if isinstance(rows, list):
+        return rows
+    data = value.get("data")
+    if data is not value:
+        nested = _find_rows(data)
+        if nested:
+            return nested
+    result = value.get("result")
+    if result is not value:
+        nested = _find_rows(result)
+        if nested:
+            return nested
+    return []
+
+
+def _requested_tower_count(ranges: str) -> int | None:
+    text = (ranges or "").strip()
+    if not text or text in {"全部", "所有", "ALL", "all"}:
+        return None
+
+    range_match = re.search(r"(\d+)\s*(?:-|~|到|至)\s*(\d+)", text)
+    if range_match:
+        start = int(range_match.group(1))
+        end = int(range_match.group(2))
+        if start > end:
+            start, end = end, start
+        return end - start + 1
+
+    numbers = [int(value) for value in re.findall(r"\d+", text)]
+    if not numbers:
+        return None
+    return len(set(numbers))
+
+
+def _tower_range_invalid_message(
+    parent_device_name: str,
+    ranges: str,
+    rows: list[dict[str, Any]],
+) -> str | None:
+    requested_count = _requested_tower_count(ranges)
+    if requested_count is None or requested_count <= len(rows):
+        return None
+
+    suggestion = f"是否需要帮您指定巡检1-{len(rows)}号杆塔，" if rows else ""
+    return (
+        f"{parent_device_name} 线路下仅查询到 {len(rows)} 基符合条件的杆塔，"
+        f"少于您输入的范围“{ranges}”对应的 {requested_count} 基杆塔。"
+        f"{suggestion}或者请您重新输入需要巡检的有效杆塔范围。"
+    )
 
 
 def _error(code: str, message: str) -> dict[str, Any]:

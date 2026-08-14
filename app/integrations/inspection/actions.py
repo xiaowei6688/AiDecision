@@ -15,14 +15,22 @@ from app.integrations.inspection.models import (
 CREATE_PLAN = ActionSpec(
     action_id="inspection.create_plan",
     title="创建巡检计划",
-    description="在巡检系统中创建计划，并绑定已确认的线路和杆塔。",
+    description=(
+        "在巡检系统中创建计划，并绑定已确认的线路和杆塔。"
+        "planObjectList 必须来自 inspection_query_device_data 返回的真实 planObjectList，"
+        "不得由模型自行根据线路名或杆塔名编造 deviceGuid/parentDeviceGuid。"
+    ),
     system="inspection",
     inputs=[
         ActionInputSpec("planType", description="计划类型字典值"),
         ActionInputSpec("planName", description="计划名称"),
         ActionInputSpec("inspectStartTime", description="开始时间"),
         ActionInputSpec("inspectEndTime", description="结束时间"),
-        ActionInputSpec("planObjectList", type="array", description="巡检杆塔列表"),
+        ActionInputSpec(
+            "planObjectList",
+            type="array",
+            description="巡检杆塔列表，必须直接使用 inspection_query_device_data 返回的 planObjectList",
+        ),
     ],
     input_model=CreateInspectionPlanInput,
     executor=ActionExecutorSpec(adapter="inspection", method="create_plan"),

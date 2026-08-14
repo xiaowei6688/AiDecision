@@ -27,6 +27,7 @@ def inspection_action_result_projection(result: ActionResult) -> dict[str, objec
         question = "请确认是否创建以下巡检工单"
     else:
         return {}
+    execute_payload = _legacy_payload(params)
     return {
         "question": question,
         "businessId": "inspection",
@@ -34,10 +35,10 @@ def inspection_action_result_projection(result: ActionResult) -> dict[str, objec
         "routePath": route_path,
         "executeApi": execute_api,
         "executeMethod": "POST",
-        "executePayload": params,
+        "executePayload": execute_payload,
         "executionMode": "frontend_callback",
         "confirmation_token": result.data.get("confirmation_token"),
-        "displayFields": _display_fields(action_id, params),
+        "displayFields": _display_fields(action_id, execute_payload),
     }
 
 
@@ -79,3 +80,30 @@ def _display_fields(action_id: str, params: dict[str, Any]) -> dict[str, Any]:
         "startDate": params.get("start_date", params.get("startDate")),
         "endDate": params.get("end_date", params.get("endDate")),
     }
+
+
+_LEGACY_FIELD_NAMES = {
+    "plan_type": "planType",
+    "plan_name": "planName",
+    "inspect_start_time": "inspectStartTime",
+    "inspect_end_time": "inspectEndTime",
+    "plan_object_list": "planObjectList",
+    "plan_guid": "planGuid",
+    "work_nature": "workNature",
+    "is_cycle": "isCycle",
+    "inspection_method": "inspectionMethod",
+    "start_date": "startDate",
+    "end_date": "endDate",
+    "order_detail_list": "orderDetailList",
+    "work_content": "workContent",
+    "equip_sn": "equipSn",
+    "flight_workers": "flightWorkers",
+    "photo_storage_type": "photoStorageType",
+    "pano_shot": "panoShot",
+    "is_record": "isRecord",
+    "is_terrain": "isTerrain",
+}
+
+
+def _legacy_payload(params: dict[str, Any]) -> dict[str, Any]:
+    return {_LEGACY_FIELD_NAMES.get(key, key): value for key, value in params.items()}

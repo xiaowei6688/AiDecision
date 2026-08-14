@@ -8,12 +8,16 @@ from app.integrations.inspection.notifications import (
     build_notification_event,
 )
 from app.integrations.inspection.checks import valid_time_window
-from app.integrations.inspection.models import CreateInspectionWorkOrderInput
+from app.integrations.inspection.models import CreateInspectionPlanInput, CreateInspectionWorkOrderInput
 from app.integrations.inspection.adapter import InspectionAdapter
 from app.integrations.inspection.auth import InspectionAuthClient
 from app.integrations.inspection.config import InspectionSettings
 from app.integrations.inspection.ui import inspection_action_result_projection, inspection_human_interrupt_projection
-from app.integrations.inspection.workflows import inspection_query_coverage, inspection_query_plan_detail
+from app.integrations.inspection.workflows import (
+    inspection_query_coverage,
+    inspection_query_device_data,
+    inspection_query_plan_detail,
+)
 from app.actions.schemas import ActionResult
 from app.integrations.projections import (
     project_action_result,
@@ -42,6 +46,92 @@ def test_inspection_work_order_requires_a_drone_for_drone_method() -> None:
             "endDate": "2026-08-14 10:00:00",
             "orderDetailList": [{"deviceGuid": "tower-1"}],
             "workContent": "线路巡检",
+        })
+
+
+def test_inspection_plan_objects_are_normalized_for_legacy_payload() -> None:
+    payload = CreateInspectionPlanInput.model_validate({
+        "planType": "5",
+        "planName": "临时巡检计划",
+        "inspectStartTime": "2026-08-14 08:00:00",
+        "inspectEndTime": "2026-08-14 10:00:00",
+        "planObjectList": [{
+            "tower_guid": "tower-1",
+            "basic_tower_ledger_name": "杆塔1",
+            "major": "tms",
+            "line_guid": "line-1",
+            "basic_line_ledger_name": "线路1",
+        }],
+    }).model_dump(mode="json")
+
+    assert payload["plan_object_list"] == [{
+        "deviceGuid": "tower-1",
+        "deviceName": "杆塔1",
+        "major": "tms",
+        "parentDeviceGuid": "line-1",
+        "parentDeviceName": "线路1",
+    }]
+
+
+def test_inspection_plan_object_old_fields_override_blank_legacy_keys() -> None:
+    payload = CreateInspectionPlanInput.model_validate({
+        "planType": "5",
+        "planName": "临时巡检计划",
+        "inspectStartTime": "2026-08-14 08:00:00",
+        "inspectEndTime": "2026-08-14 10:00:00",
+        "planObjectList": [{
+            "deviceGuid": None,
+            "deviceName": None,
+            "major": "tms",
+            "parentDeviceGuid": None,
+            "parentDeviceName": None,
+            "tower_guid": "tower-1",
+            "basic_tower_ledger_name": "杆塔1",
+            "line_guid": "line-1",
+            "basic_line_ledger_name": "线路1",
+        }],
+    }).model_dump(mode="json")
+
+    assert payload["plan_object_list"] == [{
+        "deviceGuid": "tower-1",
+        "deviceName": "杆塔1",
+        "major": "tms",
+        "parentDeviceGuid": "line-1",
+        "parentDeviceName": "线路1",
+    }]
+
+
+def test_inspection_plan_object_rejects_blank_required_object_fields() -> None:
+    with pytest.raises(ValueError, match="planObjectList\\[0\\] 缺少真实巡检对象字段"):
+        CreateInspectionPlanInput.model_validate({
+            "planType": "5",
+            "planName": "临时巡检计划",
+            "inspectStartTime": "2026-08-14 08:00:00",
+            "inspectEndTime": "2026-08-14 10:00:00",
+            "planObjectList": [{
+                "deviceGuid": None,
+                "deviceName": None,
+                "major": None,
+                "parentDeviceGuid": None,
+                "parentDeviceName": None,
+            }],
+        })
+
+
+def test_inspection_plan_object_rejects_guessed_name_values() -> None:
+    with pytest.raises(ValueError, match="疑似使用名称冒充 GUID"):
+        CreateInspectionPlanInput.model_validate({
+            "planType": "5",
+            "planName": "临时巡检计划",
+            "inspectStartTime": "2026-08-14 08:00:00",
+            "inspectEndTime": "2026-08-14 10:00:00",
+            "planObjectList": [{
+                "deviceGuid": "10kV十九线#3",
+                "deviceName": "10kV十九线#3",
+                "major": "10kV十九线",
+                "parentDeviceGuid": "10kV十九线",
+                "parentDeviceName": "10kV十九线",
+            }],
         })
 
 
@@ -76,6 +166,44 @@ def test_inspection_confirmation_projection_is_integration_owned() -> None:
     register_action_result_projection(inspection_action_result_projection)
     assert inspection_action_result_projection(result)["actionCode"] == "createTempOrder"
     assert project_action_result(result)["executeApi"] == "/order/createTempOrder"
+
+
+def test_inspection_create_plan_projection_uses_legacy_plan_object_shape() -> None:
+    result = ActionResult(
+        status="requires_confirmation",
+        action_id="inspection.create_plan",
+        message="confirm",
+        data={
+            "action": {"title": "创建巡检计划"},
+            "confirmation_token": "token-1",
+            "params": {
+                "plan_type": "5",
+                "plan_name": "临时巡检计划",
+                "inspect_start_time": "2026-08-14 08:00:00",
+                "inspect_end_time": "2026-08-14 10:00:00",
+                "plan_object_list": [{
+                    "deviceGuid": "tower-1",
+                    "deviceName": "杆塔1",
+                    "major": "tms",
+                    "parentDeviceGuid": "line-1",
+                    "parentDeviceName": "线路1",
+                }],
+            },
+        },
+    )
+
+    projected = inspection_action_result_projection(result)
+
+    assert projected["actionCode"] == "createPlan"
+    assert projected["executePayload"]["planType"] == "5"
+    assert projected["executePayload"]["planObjectList"] == [{
+        "deviceGuid": "tower-1",
+        "deviceName": "杆塔1",
+        "major": "tms",
+        "parentDeviceGuid": "line-1",
+        "parentDeviceName": "线路1",
+    }]
+    assert projected["confirmation_token"] == "token-1"
 
 
 def test_inspection_human_interrupt_projection_flattens_legacy_payload() -> None:
@@ -224,6 +352,58 @@ def test_inspection_query_coverage_uses_integration_datasource(monkeypatch: pyte
             "question": "查询线路名称为'线路A'的杆塔、航迹和机场覆盖情况",
         }
     ]
+
+
+def test_inspection_query_device_data_uses_legacy_question_and_maps_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def query(
+            self,
+            datasource: str,
+            question: str,
+        ) -> dict[str, object]:
+            calls.append({"datasource": datasource, "question": question})
+            return {
+                "status": "success",
+                "data": {
+                    "rows": [{
+                        "tower_guid": "tower-guid-3",
+                        "basic_tower_ledger_name": "10kV十九线#3",
+                        "major": "tms",
+                        "line_guid": "line-guid-19",
+                        "basic_line_ledger_name": "10kV十九线",
+                    }]
+                },
+            }
+
+    monkeypatch.setattr(
+        "app.integrations.inspection.workflows.get_inspection_settings",
+        lambda: InspectionSettings(
+            _env_file=None,
+            text_to_sql_datasource="inspection_mysql",
+        ),
+    )
+    monkeypatch.setattr("app.integrations.inspection.workflows.TextToSqlClient", FakeClient)
+
+    result = inspection_query_device_data.invoke({"parent_device_name": "10kV十九线", "ranges": "#3"})
+
+    assert result["ok"] is True
+    assert result["question"] == "查询10kV十九线线路下#3的杆塔uid、杆塔名称、杆塔专业、线路uid、线路名称"
+    assert calls == [{
+        "datasource": "inspection_mysql",
+        "question": "查询10kV十九线线路下#3的杆塔uid、杆塔名称、杆塔专业、线路uid、线路名称",
+    }]
+    assert result["planObjectList"] == [{
+        "deviceGuid": "tower-guid-3",
+        "deviceName": "10kV十九线#3",
+        "major": "tms",
+        "parentDeviceGuid": "line-guid-19",
+        "parentDeviceName": "10kV十九线",
+    }]
 
 
 @pytest.mark.asyncio
