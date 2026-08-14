@@ -39,11 +39,13 @@ def test_inspection_actions_are_confirmed_writes() -> None:
 
 
 def test_inspection_registers_user_friendly_tool_steps() -> None:
+    from app.integrations.context import PluginContext
     from app.integrations.inspection.registration import register_inspection_tools
 
-    register_inspection_tools()
+    context = PluginContext()
+    register_inspection_tools(context)
 
-    step = tool_step("inspection_query_device_data")
+    step = context.tool_steps["inspection_query_device_data"]
     assert step.title == "核对线路杆塔台账"
     assert step.summary == "正在按线路和范围核对杆塔 UID、名称、专业及所属线路"
 

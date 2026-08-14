@@ -8,13 +8,10 @@ protocol-compatible callbacks.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Protocol
+from typing import Protocol
 
 from fastapi import APIRouter
 
-from app.actions.executor import BusinessActionExecutor
-from app.actions.policy import PolicyEngine
-from app.actions.registry import ActionRegistry
 from app.integrations.context import PluginContext
 
 
@@ -25,28 +22,6 @@ class PluginBundle(Protocol):
 
     def register_context(self, context: PluginContext) -> Sequence[APIRouter]:
         """Register all capabilities into one application-scoped context."""
-
-    async def startup(self) -> None:
-        ...
-
-    async def shutdown(self) -> None:
-        ...
-
-
-class IntegrationBundle(Protocol):
-    """Legacy registration contract kept for older integrations."""
-    name: str
-
-    def register(
-        self,
-        registry: ActionRegistry,
-        executor: BusinessActionExecutor,
-        policy_engine: PolicyEngine,
-    ) -> Sequence[APIRouter]:
-        ...
-
-    def register_business_agents(self, registry: Any) -> None:
-        ...
 
     async def startup(self) -> None:
         ...

@@ -19,11 +19,9 @@ from app.integrations.projections import (
     register_action_result_projection,
     register_frontend_callback_resume_projection,
 )
-from app.integrations.bootstrap import register_integrations, register_business_agents
-from app.actions.executor import default_action_executor
-from app.actions.policy import default_policy_engine
-from app.actions.registry import default_action_registry
-from app.agents.business_agents import BusinessAgentRegistry
+from app.integrations.bootstrap import IntegrationManager
+from app.integrations.context import PluginContext
+from app.core.runtime_context import RequestRuntimeContext, reset_runtime_context, set_runtime_context
 
 
 class _FakeModel:
@@ -71,8 +69,9 @@ def test_slots_from_human_resume_includes_response_and_data() -> None:
 
 
 def test_dynamic_tools_include_business_agent_consultation() -> None:
-    register_integrations(default_action_registry, default_action_executor, default_policy_engine)
-    tools = build_agent_tools(_FakeModel())
+    context = PluginContext()
+    IntegrationManager(["inspection"]).register_context(context)
+    tools = build_agent_tools(_FakeModel(), plugin_context=context)
 
     names = {getattr(item, "name", "") for item in tools}
 
@@ -116,10 +115,10 @@ def test_update_task_progress_returns_generic_progress_command() -> None:
 
 
 def test_register_business_agents_can_be_restricted() -> None:
-    registry = BusinessAgentRegistry()
-    register_business_agents(registry, enabled_integrations=["inspection"])
+    context = PluginContext()
+    IntegrationManager(["inspection"]).register_context(context)
 
-    assert [agent.business_id for agent in registry.list()] == ["inspection"]
+    assert [agent.business_id for agent in context.business_agent_registry.list()] == ["inspection"]
 
 
 def test_dst_dict_updates_merge_without_losing_existing_facts() -> None:
@@ -173,13 +172,20 @@ async def test_frontend_callback_action_interrupts_until_frontend_result(monkeyp
             },
         }
 
-    monkeypatch.setattr("app.tools.base_tool.default_action_executor.execute", execute)
+    context = PluginContext()
+    IntegrationManager(["inspection"]).register_context(context)
+    monkeypatch.setattr(context.action_executor, "execute", execute)
+    monkeypatch.setattr("app.tools.base_tool._action_executor", lambda: context.action_executor)
     monkeypatch.setattr("app.tools.base_tool.interrupt", fake_interrupt)
 
-    result = await call_business_action.ainvoke({
-        "action_id": "inspection.create_plan",
-        "params": {"planName": "临时计划"},
-    })
+    token = set_runtime_context(RequestRuntimeContext(plugin_context=context))
+    try:
+        result = await call_business_action.ainvoke({
+            "action_id": "inspection.create_plan",
+            "params": {"planName": "临时计划"},
+        })
+    finally:
+        reset_runtime_context(token)
 
     assert interrupts[0]["payload"]["executionMode"] == "frontend_callback"
     assert interrupts[0]["payload"]["actionCode"] == "createPlan"

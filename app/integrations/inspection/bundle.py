@@ -6,13 +6,10 @@ from collections.abc import Sequence
 
 from fastapi import APIRouter
 
-from app.actions.executor import BusinessActionExecutor
-from app.actions.policy import PolicyEngine
-from app.actions.registry import ActionRegistry
 from app.integrations.inspection.registration import (
     inspection_routers,
     register_inspection_actions,
-    register_inspection_agents,
+    register_inspection_agent,
     register_inspection_projections,
     register_inspection_tools,
 )
@@ -26,28 +23,12 @@ class InspectionBundle:
     def __init__(self) -> None:
         self._lifecycle = InspectionLifecycle()
 
-    def register(
-        self,
-        registry: ActionRegistry,
-        executor: BusinessActionExecutor,
-        policy_engine: PolicyEngine,
-    ) -> Sequence[APIRouter]:
-        register_inspection_actions(registry, executor, policy_engine)
-        register_inspection_projections()
-        register_inspection_tools()
-        return inspection_routers()
-
     def register_context(self, context: PluginContext) -> Sequence[APIRouter]:
-        register_inspection_actions(
-            context.action_registry, context.action_executor, context.policy_engine
-        )
+        register_inspection_actions(context)
         register_inspection_projections(context)
         register_inspection_tools(context)
-        register_inspection_agents(context.business_agent_registry)
+        register_inspection_agent(context)
         return inspection_routers()
-
-    def register_business_agents(self, registry) -> None:
-        register_inspection_agents(registry)
 
     async def startup(self) -> None:
         await self._lifecycle.startup()

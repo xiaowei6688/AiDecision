@@ -4,9 +4,6 @@ from typing import Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import tool
 
-from app.actions.bootstrap import bootstrap_actions
-from app.actions.registry import default_action_registry
-from app.agents.business_bootstrap import bootstrap_business_agents
 from app.agents.business_agents import (
     BusinessCollaborationPlan,
     BusinessCollaborationStep,
@@ -22,24 +19,21 @@ from app.integrations.context import PluginContext
 
 def build_agent_tools(
     model: BaseChatModel,
-    enabled_integrations: list[str] | None = None,
     plugin_context: PluginContext | None = None,
 ) -> list[Any]:
     """Build tools that may need runtime dependencies such as the chat model."""
 
     if plugin_context is None:
-        bootstrap_actions(enabled_integrations)
+        raise ValueError("plugin_context is required to build Agent tools")
     available = {tool.name: tool for tool in AGENT_TOOLS}
     available["plan_business_collaboration"] = _build_plan_business_collaboration_tool(plugin_context)
     available["consult_business_agents"] = _build_consult_business_agents_tool(model, plugin_context)
     available["run_business_collaboration"] = _build_run_business_collaboration_tool(model, plugin_context)
-    if plugin_context is None:
-        bootstrap_business_agents(enabled_integrations=enabled_integrations)
     available.update({item.name: item for item in list_context_tools(plugin_context)})
     return list(available.values())
 
 
-def _build_plan_business_collaboration_tool(plugin_context: PluginContext | None = None) -> Any:
+def _build_plan_business_collaboration_tool(plugin_context: PluginContext) -> Any:
     @tool
     def plan_business_collaboration(
         task: str,
@@ -47,11 +41,7 @@ def _build_plan_business_collaboration_tool(plugin_context: PluginContext | None
     ) -> dict[str, Any]:
         """创建并校验业务 Agent 调度图；不调用 Agent，也不执行任何业务动作。"""
 
-        registry = (
-            plugin_context.business_agent_registry
-            if plugin_context is not None
-            else bootstrap_business_agents()
-        )
+        registry = plugin_context.business_agent_registry
         try:
             plan = BusinessCollaborationPlan.model_validate({"task": task, "steps": steps})
             validated = validate_collaboration_plan(plan, registry)
@@ -72,7 +62,7 @@ def _build_plan_business_collaboration_tool(plugin_context: PluginContext | None
 
 
 def _build_consult_business_agents_tool(
-    model: BaseChatModel, plugin_context: PluginContext | None = None
+    model: BaseChatModel, plugin_context: PluginContext
 ) -> Any:
     @tool
     async def consult_business_agents(
@@ -86,11 +76,7 @@ def _build_consult_business_agents_tool(
         负责汇总意见、消解冲突并通过统一工具完成真实查询或动作执行。
         """
 
-        registry = (
-            plugin_context.business_agent_registry
-            if plugin_context is not None
-            else bootstrap_business_agents()
-        )
+        registry = plugin_context.business_agent_registry
         selected: list[BusinessAgentManifest] = []
         unknown: list[str] = []
         for business_id in dict.fromkeys(business_ids):
@@ -106,8 +92,6 @@ def _build_consult_business_agents_tool(
                 "available_business_agents": [item.public_dict() for item in registry.list()],
             }
 
-        if plugin_context is None:
-            bootstrap_actions()
         advice = await asyncio.gather(
             *[
                 _consult_business_agent(
@@ -115,9 +99,7 @@ def _build_consult_business_agents_tool(
                     agent,
                     task,
                     context or {},
-                    plugin_context.action_registry
-                    if plugin_context is not None
-                    else default_action_registry,
+                    plugin_context.action_registry,
                 )
                 for agent in selected
             ]
@@ -132,7 +114,7 @@ def _build_consult_business_agents_tool(
 
 
 def _build_run_business_collaboration_tool(
-    model: BaseChatModel, plugin_context: PluginContext | None = None
+    model: BaseChatModel, plugin_context: PluginContext
 ) -> Any:
     @tool
     async def run_business_collaboration(
@@ -142,11 +124,7 @@ def _build_run_business_collaboration_tool(
     ) -> dict[str, Any]:
         """按已校验调度图咨询业务 Agent；无依赖 Agent 并发，后续 Agent 接收前置建议。"""
 
-        registry = (
-            plugin_context.business_agent_registry
-            if plugin_context is not None
-            else bootstrap_business_agents()
-        )
+        registry = plugin_context.business_agent_registry
         try:
             plan = BusinessCollaborationPlan.model_validate({"task": task, "steps": steps})
             validated = validate_collaboration_plan(plan, registry)
@@ -158,13 +136,7 @@ def _build_run_business_collaboration_tool(
                 "message": str(exc),
             }
 
-        if plugin_context is None:
-            bootstrap_actions()
-        action_registry = (
-            plugin_context.action_registry
-            if plugin_context is not None
-            else default_action_registry
-        )
+        action_registry = plugin_context.action_registry
         advice_by_agent: dict[str, dict[str, Any]] = {}
         for wave in waves:
             results = await asyncio.gather(*[
@@ -200,7 +172,7 @@ async def _consult_business_agent(
     agent: BusinessAgentManifest,
     task: str,
     context: dict[str, Any],
-    action_registry: Any = default_action_registry,
+    action_registry: Any,
 ) -> dict[str, Any]:
     actions = [
         action.public_dict()

@@ -7,15 +7,11 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.types import Command, interrupt
 
-from app.actions.bootstrap import bootstrap_actions
-from app.actions.executor import default_action_executor
-from app.actions.registry import default_action_registry
 from app.actions.schemas import ActionExecutionContext, ActionResult
 from app.agents.state import DialogueStage, HumanActionStatus
 from app.adapters.text_to_sql import TextToSqlClient
 from app.core.config import get_settings
 from app.core.runtime_context import get_runtime_context
-from app.agents.business_bootstrap import bootstrap_business_agents
 from app.domain.plan_store import default_plan_store
 from app.domain.plans import ExecutionPlan, PlanStatus, validate_execution_plan
 from app.integrations.projections import (
@@ -29,27 +25,29 @@ PROGRESS_STATUSES = {"pending", "running", "completed", "failed", "skipped"}
 
 
 def _ensure_business_runtime() -> None:
-    if get_runtime_context().plugin_context is None:
-        bootstrap_actions()
+    _plugin_context()
 
 
 def _plugin_context() -> Any:
-    return get_runtime_context().plugin_context
+    context = get_runtime_context().plugin_context
+    if context is None:
+        raise RuntimeError("plugin context is required while executing Agent tools")
+    return context
 
 
 def _action_registry() -> Any:
     context = _plugin_context()
-    return context.action_registry if context is not None else default_action_registry
+    return _plugin_context().action_registry
 
 
 def _action_executor() -> Any:
     context = _plugin_context()
-    return context.action_executor if context is not None else default_action_executor
+    return _plugin_context().action_executor
 
 
 def _business_agent_registry() -> Any:
     context = _plugin_context()
-    return context.business_agent_registry if context is not None else bootstrap_business_agents()
+    return _plugin_context().business_agent_registry
 
 
 @tool

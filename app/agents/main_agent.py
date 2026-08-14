@@ -24,9 +24,7 @@ def build_main_agent(
     chat_model = build_chat_model(settings)
     return create_deep_agent(
         model=chat_model,
-        tools=build_agent_tools(
-            chat_model, settings.enabled_integrations, plugin_context
-        ),
+        tools=build_agent_tools(chat_model, plugin_context),
         system_prompt=DECISION_AGENT_PROMPT,
         subagents=build_role_subagents(chat_model),
         middleware=[SummaryInjectionMiddleware()],

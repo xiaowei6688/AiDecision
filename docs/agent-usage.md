@@ -85,8 +85,8 @@ class InventoryBundle:
         return [inventory_router]
 ```
 
-`register_context` 是新插件的正式入口。旧的 `register(registry, executor, policy_engine)`
-仅用于兼容尚未迁移的插件。
+`register_context` 是插件唯一的注册入口。插件不应向框架核心增加业务分支，也不应自行
+修改其他插件的注册表。
 
 新业务的完整流程建议保持在插件内部：查询和数据组装放 `workflows.py`，业务写操作的
 参数模型放 `models.py`，动作契约放 `actions.py`，真实上游调用放 `adapter.py`。如果前端

@@ -9,29 +9,28 @@ from app.agents.business_agents import (
     parse_business_advice,
     validate_collaboration_plan,
 )
-from app.agents.business_bootstrap import bootstrap_business_agents
 from app.agents.business_runtime import (
     BusinessAgentInvocation,
     build_business_agent_runtime,
 )
 from app.tools.dynamic_tools import _consult_business_agent
-from app.integrations.bootstrap import IntegrationManager
 from app.integrations.context import PluginContext
+from app.actions.registry import ActionRegistry
+from app.integrations.bootstrap import IntegrationManager
 
 
 def test_framework_registers_the_inspection_business_agent() -> None:
-    registry = bootstrap_business_agents(BusinessAgentRegistry())
+    context = PluginContext()
+    IntegrationManager(["inspection"]).register_context(context)
 
-    assert [agent.business_id for agent in registry.list()] == ["inspection"]
+    assert [agent.business_id for agent in context.business_agent_registry.list()] == ["inspection"]
 
 
 def test_disabled_plugin_is_not_registered() -> None:
-    registry = bootstrap_business_agents(
-        BusinessAgentRegistry(),
-        enabled_integrations=["inventory"],
-    )
+    context = PluginContext()
+    IntegrationManager(["inventory"]).register_context(context)
 
-    assert registry.list() == []
+    assert context.business_agent_registry.list() == []
 
 
 def test_plugin_contexts_are_isolated_per_application() -> None:
@@ -101,6 +100,7 @@ async def test_business_advice_rejects_out_of_scope_actions() -> None:
         manifest,
         "采购物料",
         {},
+        ActionRegistry(),
     )
 
     assert result["status"] == "failed"
