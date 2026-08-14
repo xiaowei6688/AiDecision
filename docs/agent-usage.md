@@ -80,7 +80,7 @@ class InventoryBundle:
     def register_context(self, context: PluginContext) -> list[APIRouter]:
         context.action_registry.register(INVENTORY_ACTION)
         context.action_executor.register_adapter("inventory", InventoryAdapter())
-        context.register_tool(query_inventory)
+        context.tools.register(query_inventory)
         context.business_agent_registry.register(inventory_agent)
         return [inventory_router]
 ```

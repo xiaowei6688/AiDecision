@@ -44,6 +44,10 @@ app/integrations/contract/
 `app/agents`、`app/services` 或 `app/api` 中写业务判断。多个应用实例在同一进程中也不会
 共享插件能力。
 
+`PluginContext` 使用独立的 `IntegrationToolRegistry`、`ProjectionRegistry` 和
+`ActionResultHandlerRegistry` 管理插件工具与事件扩展。注册表按应用实例创建，同名工具
+冲突会在启动注册阶段直接报错，不允许后加载插件静默覆盖已有能力。
+
 ## 业务 Agent 编排
 
 系统始终由一个主编排 Agent 接待用户。各业务系统的业务 Agent 不是用户选择的根 Agent，

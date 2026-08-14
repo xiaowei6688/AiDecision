@@ -4,8 +4,7 @@ import json
 from langchain_core.messages import AIMessage, ToolMessage
 
 from app.integrations.inspection.ui import inspection_human_interrupt_projection
-from app.integrations.projections import register_human_interrupt_projection
-from app.integrations.tools import register_tool_step
+from app.integrations.context import PluginContext
 from app.services.session_service import SessionService
 
 
@@ -82,8 +81,9 @@ def test_normalize_event_returns_message_for_top_level_messages() -> None:
 
 
 def test_normalize_event_converts_confirmation_tool_result_to_human_action_required() -> None:
-    service = SessionService(agent=None)
-    register_human_interrupt_projection(inspection_human_interrupt_projection)
+    context = PluginContext()
+    context.projections.register_human_interrupt(inspection_human_interrupt_projection)
+    service = SessionService(agent=None, plugin_context=context)
     tool_result = {
         "status": "requires_confirmation",
         "action_id": "inspection.create_work_order",
@@ -193,12 +193,13 @@ def test_normalize_event_prefers_frontend_callback_completion_over_confirmation(
 
 
 def test_normalize_event_converts_tool_calls_to_intermediate_thinking_step() -> None:
-    register_tool_step(
+    context = PluginContext()
+    context.tools.register_step(
         "semantic_query",
         "核对业务数据",
         "正在基于当前问题核对业务数据来源",
     )
-    service = SessionService(agent=None)
+    service = SessionService(agent=None, plugin_context=context)
     event = {
         "messages": [
             AIMessage(
@@ -254,12 +255,15 @@ def test_normalize_event_does_not_emit_thinking_step_for_human_input_tool_call()
 
 
 def test_stream_message_deduplicates_repeated_thinking_steps() -> None:
-    register_tool_step(
+    context = PluginContext()
+    context.tools.register_step(
         "dedupe_semantic_query",
         "核对业务数据",
         "正在基于当前问题核对业务数据来源",
     )
-    service = SessionService(agent=DuplicateToolCallStreamingAgent())
+    service = SessionService(
+        agent=DuplicateToolCallStreamingAgent(), plugin_context=context
+    )
 
     events = __import__("asyncio").run(_collect_stream(service))
 

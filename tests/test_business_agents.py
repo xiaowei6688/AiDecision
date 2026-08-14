@@ -45,10 +45,10 @@ def test_plugin_contexts_are_isolated_per_application() -> None:
     assert inspection_context.action_registry.get("inspection.create_plan")
     with pytest.raises(KeyError):
         empty_context.action_registry.get("inspection.create_plan")
-    assert inspection_context.integration_tools
-    assert empty_context.integration_tools == []
-    assert inspection_context.action_result_projections
-    assert empty_context.action_result_projections == []
+    assert len(inspection_context.tools) > 0
+    assert len(empty_context.tools) == 0
+    assert inspection_context.projections.counts()["action_results"] > 0
+    assert empty_context.projections.counts()["action_results"] == 0
 
 
 def test_business_agent_registry_rejects_duplicate_ids() -> None:

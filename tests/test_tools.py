@@ -10,15 +10,12 @@ from app.tools.base_tool import (
 from app.actions.schemas import ActionResult
 from app.tools.dynamic_tools import build_agent_tools
 from app.agents.state import merge_dict_state
-from app.integrations.projections import project_action_result
 from app.integrations.inspection.ui import (
     inspection_action_result_projection,
     inspection_frontend_callback_resume_projection,
 )
-from app.integrations.projections import (
-    register_action_result_projection,
-    register_frontend_callback_resume_projection,
-)
+from app.integrations.projections import ProjectionRegistry
+from app.integrations.tools import IntegrationToolRegistry
 from app.integrations.bootstrap import IntegrationManager
 from app.integrations.context import PluginContext
 from app.core.runtime_context import RequestRuntimeContext, reset_runtime_context, set_runtime_context
@@ -26,6 +23,17 @@ from app.core.runtime_context import RequestRuntimeContext, reset_runtime_contex
 
 class _FakeModel:
     """占位模型，仅用于构建动态工具，不触发 LLM 调用。"""
+
+
+def test_plugin_tool_registry_rejects_name_conflicts() -> None:
+    registry = IntegrationToolRegistry()
+    first = type("PluginTool", (), {"name": "shared_query"})()
+    second = type("PluginTool", (), {"name": "shared_query"})()
+
+    registry.register(first)
+
+    with pytest.raises(ValueError, match="already registered"):
+        registry.register(second)
 
 
 def test_format_human_resume_for_tool_includes_user_content() -> None:
@@ -139,13 +147,11 @@ def test_action_result_projection_defaults_to_empty_dict_without_plugins() -> No
         message="ok",
     )
 
-    assert project_action_result(result) == {}
+    assert ProjectionRegistry().project_action_result(result) == {}
 
 
 @pytest.mark.asyncio
 async def test_frontend_callback_action_interrupts_until_frontend_result(monkeypatch: pytest.MonkeyPatch) -> None:
-    register_action_result_projection(inspection_action_result_projection)
-    register_frontend_callback_resume_projection(inspection_frontend_callback_resume_projection)
     interrupts: list[dict[str, object]] = []
 
     async def execute(**kwargs: object) -> ActionResult:

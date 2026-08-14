@@ -11,8 +11,6 @@ from app.agents.state import default_dst_metadata
 from app.services.context_compressor import ContextCompressor
 from app.schemas.chat import HumanResumeRequest, ServerEventType, SessionStateResponse
 from app.core.runtime_context import RequestRuntimeContext, reset_runtime_context, set_runtime_context
-from app.integrations.projections import project_human_interrupt_with_context
-from app.integrations.tools import context_tool_step
 from app.integrations.context import PluginContext
 
 
@@ -29,7 +27,7 @@ class SessionService:
         self._agent = agent
         self._context_compressor = context_compressor
         self._runtime_context_provider = runtime_context_provider
-        self._plugin_context = plugin_context
+        self._plugin_context = plugin_context or PluginContext()
 
     def _config(self, session_id: str) -> dict[str, Any]:
         return {"configurable": {"thread_id": session_id}}
@@ -229,9 +227,8 @@ class SessionService:
 
         if isinstance(event, dict) and "__interrupt__" in event:
             interrupts = self._jsonable(event["__interrupt__"])
-            projected = project_human_interrupt_with_context(
-                interrupts if isinstance(interrupts, list) else [interrupts],
-                self._plugin_context,
+            projected = self._plugin_context.projections.project_human_interrupt(
+                interrupts if isinstance(interrupts, list) else [interrupts]
             )
             payload = {
                 "type": "human_action_required",
@@ -243,8 +240,8 @@ class SessionService:
 
         confirmation_interrupt = self._confirmation_interrupt_from_event(event)
         if confirmation_interrupt is not None:
-            projected = project_human_interrupt_with_context(
-                [confirmation_interrupt], self._plugin_context
+            projected = self._plugin_context.projections.project_human_interrupt(
+                [confirmation_interrupt]
             )
             payload = {
                 "type": "human_action_required",
@@ -290,7 +287,7 @@ class SessionService:
             if any(self._is_human_input_tool(name) for name in tool_names):
                 return None
             descriptions = [
-                context_tool_step(self._plugin_context, name) for name in tool_names
+                self._plugin_context.tools.step(name) for name in tool_names
             ]
             first_description = descriptions[0]
             return {

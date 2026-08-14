@@ -1,8 +1,9 @@
-"""Optional integration-owned projections over generic action results."""
+"""Typed event projection registry owned by one plugin context."""
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from app.actions.schemas import ActionResult
 
@@ -11,78 +12,55 @@ ActionResultProjection = Callable[[ActionResult], dict[str, object]]
 HumanInterruptProjection = Callable[[list[object]], dict[str, object]]
 FrontendCallbackResumeProjection = Callable[[dict[str, Any], Any], dict[str, object]]
 
-_action_result_projections: list[ActionResultProjection] = []
-_human_interrupt_projections: list[HumanInterruptProjection] = []
-_frontend_callback_resume_projections: list[FrontendCallbackResumeProjection] = []
 
+class ProjectionRegistry:
+    def __init__(self) -> None:
+        self._action_results: list[ActionResultProjection] = []
+        self._human_interrupts: list[HumanInterruptProjection] = []
+        self._frontend_callbacks: list[FrontendCallbackResumeProjection] = []
 
-def register_action_result_projection(projection: ActionResultProjection) -> None:
-    if projection in _action_result_projections:
-        return
-    _action_result_projections.append(projection)
+    def register_action_result(self, projection: ActionResultProjection) -> None:
+        self._append_unique(self._action_results, projection)
 
+    def register_human_interrupt(self, projection: HumanInterruptProjection) -> None:
+        self._append_unique(self._human_interrupts, projection)
 
-def project_action_result(result: ActionResult) -> dict[str, object]:
-    payload: dict[str, object] = {}
-    for projection in _action_result_projections:
-        payload.update(projection(result))
-    return payload
+    def register_frontend_callback(
+        self, projection: FrontendCallbackResumeProjection
+    ) -> None:
+        self._append_unique(self._frontend_callbacks, projection)
 
+    def project_action_result(self, result: ActionResult) -> dict[str, object]:
+        return self._merge(projection(result) for projection in self._action_results)
 
-def project_action_result_with_context(
-    result: ActionResult, context: Any | None
-) -> dict[str, object]:
-    projections = context.action_result_projections if context is not None else _action_result_projections
-    payload: dict[str, object] = {}
-    for projection in projections:
-        payload.update(projection(result))
-    return payload
+    def project_human_interrupt(self, interrupts: list[object]) -> dict[str, object]:
+        return self._merge(
+            projection(interrupts) for projection in self._human_interrupts
+        )
 
+    def project_frontend_callback(
+        self, pending_payload: dict[str, Any], resume_value: Any
+    ) -> dict[str, object]:
+        return self._merge(
+            projection(pending_payload, resume_value)
+            for projection in self._frontend_callbacks
+        )
 
-def register_human_interrupt_projection(projection: HumanInterruptProjection) -> None:
-    if projection in _human_interrupt_projections:
-        return
-    _human_interrupt_projections.append(projection)
+    def counts(self) -> dict[str, int]:
+        return {
+            "action_results": len(self._action_results),
+            "human_interrupts": len(self._human_interrupts),
+            "frontend_callbacks": len(self._frontend_callbacks),
+        }
 
+    @staticmethod
+    def _append_unique(collection: list[Any], value: Any) -> None:
+        if value not in collection:
+            collection.append(value)
 
-def project_human_interrupt(interrupts: list[object]) -> dict[str, object]:
-    payload: dict[str, object] = {}
-    for projection in _human_interrupt_projections:
-        payload.update(projection(interrupts))
-    return payload
-
-
-def project_human_interrupt_with_context(
-    interrupts: list[object], context: Any | None
-) -> dict[str, object]:
-    projections = context.human_interrupt_projections if context is not None else _human_interrupt_projections
-    payload: dict[str, object] = {}
-    for projection in projections:
-        payload.update(projection(interrupts))
-    return payload
-
-
-def register_frontend_callback_resume_projection(projection: FrontendCallbackResumeProjection) -> None:
-    if projection in _frontend_callback_resume_projections:
-        return
-    _frontend_callback_resume_projections.append(projection)
-
-
-def project_frontend_callback_resume(
-    pending_payload: dict[str, Any],
-    resume_value: Any,
-) -> dict[str, object]:
-    payload: dict[str, object] = {}
-    for projection in _frontend_callback_resume_projections:
-        payload.update(projection(pending_payload, resume_value))
-    return payload
-
-
-def project_frontend_callback_resume_with_context(
-    pending_payload: dict[str, Any], resume_value: Any, context: Any | None
-) -> dict[str, object]:
-    projections = context.frontend_callback_projections if context is not None else _frontend_callback_resume_projections
-    payload: dict[str, object] = {}
-    for projection in projections:
-        payload.update(projection(pending_payload, resume_value))
-    return payload
+    @staticmethod
+    def _merge(projected: Any) -> dict[str, object]:
+        payload: dict[str, object] = {}
+        for item in projected:
+            payload.update(item)
+        return payload

@@ -23,13 +23,7 @@ from app.integrations.inspection.workflows import (
     inspection_query_plan_detail,
 )
 from app.actions.schemas import ActionResult
-from app.integrations.projections import (
-    project_action_result,
-    project_human_interrupt,
-    register_action_result_projection,
-    register_human_interrupt_projection,
-)
-from app.integrations.tools import tool_step
+from app.integrations.projections import ProjectionRegistry
 
 
 def test_inspection_actions_are_confirmed_writes() -> None:
@@ -45,7 +39,7 @@ def test_inspection_registers_user_friendly_tool_steps() -> None:
     context = PluginContext()
     register_inspection_tools(context)
 
-    step = context.tool_steps["inspection_query_device_data"]
+    step = context.tools.step("inspection_query_device_data")
     assert step.title == "核对线路杆塔台账"
     assert step.summary == "正在按线路和范围核对杆塔 UID、名称、专业及所属线路"
 
@@ -180,9 +174,10 @@ def test_inspection_confirmation_projection_is_integration_owned() -> None:
         data={"action": {"title": "创建巡检工单"}, "params": {"planGuid": "plan-1"}},
     )
 
-    register_action_result_projection(inspection_action_result_projection)
+    projections = ProjectionRegistry()
+    projections.register_action_result(inspection_action_result_projection)
     assert inspection_action_result_projection(result)["actionCode"] == "createTempOrder"
-    assert project_action_result(result)["executeApi"] == "/order/createTempOrder"
+    assert projections.project_action_result(result)["executeApi"] == "/order/createTempOrder"
 
 
 def test_inspection_create_plan_projection_uses_legacy_plan_object_shape() -> None:
@@ -238,8 +233,9 @@ def test_inspection_human_interrupt_projection_flattens_legacy_payload() -> None
         },
     }
 
-    register_human_interrupt_projection(inspection_human_interrupt_projection)
-    projected = project_human_interrupt([interrupt])
+    projections = ProjectionRegistry()
+    projections.register_human_interrupt(inspection_human_interrupt_projection)
+    projected = projections.project_human_interrupt([interrupt])
 
     assert projected["content"] == "请确认是否创建以下巡检工单"
     assert projected["data"]["businessId"] == "inspection"

@@ -14,10 +14,6 @@ from app.core.config import get_settings
 from app.core.runtime_context import get_runtime_context
 from app.domain.plan_store import default_plan_store
 from app.domain.plans import ExecutionPlan, PlanStatus, validate_execution_plan
-from app.integrations.projections import (
-    project_action_result_with_context,
-    project_frontend_callback_resume_with_context,
-)
 
 
 DEFAULT_HUMAN_ACTIONS = ["approve", "reject", "edit", "clarify"]
@@ -398,7 +394,7 @@ def _action_result_to_dict(result: ActionResult) -> dict[str, Any]:
         "data": result.data,
         "error_code": result.error_code,
     }
-    payload.update(project_action_result_with_context(result, _plugin_context()))
+    payload.update(_plugin_context().projections.project_action_result(result))
     return payload
 
 
@@ -447,8 +443,8 @@ def _frontend_callback_resume_result(
             "frontendResult": data,
         },
     }
-    projection = project_frontend_callback_resume_with_context(
-        pending_payload, resume_value, _plugin_context()
+    projection = _plugin_context().projections.project_frontend_callback(
+        pending_payload, resume_value
     )
     if projection:
         result.update(projection)

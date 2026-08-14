@@ -13,7 +13,6 @@ from app.agents.business_agents import (
 )
 from app.agents.business_runtime import BusinessAgentInvocation, build_business_agent_runtime
 from app.tools.base_tool import AGENT_TOOLS
-from app.integrations.tools import list_context_tools
 from app.integrations.context import PluginContext
 
 
@@ -29,7 +28,7 @@ def build_agent_tools(
     available["plan_business_collaboration"] = _build_plan_business_collaboration_tool(plugin_context)
     available["consult_business_agents"] = _build_consult_business_agents_tool(model, plugin_context)
     available["run_business_collaboration"] = _build_run_business_collaboration_tool(model, plugin_context)
-    available.update({item.name: item for item in list_context_tools(plugin_context)})
+    available.update({item.name: item for item in plugin_context.tools.list()})
     return list(available.values())
 
 

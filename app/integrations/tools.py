@@ -1,12 +1,9 @@
-"""Integration-owned tool registry."""
+"""Typed tool registry owned by one plugin context."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-
-_integration_tools: list[Any] = []
-_tool_steps: dict[str, "ToolStepDescription"] = {}
 
 
 @dataclass(frozen=True)
@@ -15,36 +12,42 @@ class ToolStepDescription:
     summary: str
 
 
-def register_integration_tool(tool: Any) -> None:
-    if tool in _integration_tools:
-        return
-    _integration_tools.append(tool)
+class IntegrationToolRegistry:
+    def __init__(self) -> None:
+        self._tools: dict[str, Any] = {}
+        self._steps: dict[str, ToolStepDescription] = {}
+
+    def register(self, value: Any) -> None:
+        name = getattr(value, "name", None)
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("plugin tool must expose a non-empty name")
+        current = self._tools.get(name)
+        if current is not None and current is not value:
+            raise ValueError(f"plugin tool already registered: {name}")
+        self._tools[name] = value
+
+    def register_step(
+        self, tool_name: str, title: str, summary: str | None = None
+    ) -> None:
+        description = build_tool_step(tool_name, title, summary)
+        if description is not None:
+            self._steps[tool_name] = description
+
+    def list(self) -> list[Any]:
+        return list(self._tools.values())
+
+    def step(self, tool_name: str) -> ToolStepDescription:
+        return self._steps.get(tool_name, _infer_tool_step(tool_name))
+
+    def __len__(self) -> int:
+        return len(self._tools)
 
 
-def list_integration_tools() -> list[Any]:
-    return [*_integration_tools]
-
-
-def list_context_tools(context: Any | None) -> list[Any]:
-    """Return tools registered by one application-scoped plugin context."""
-
-    return list(context.integration_tools) if context is not None else list_integration_tools()
-
-
-def register_tool_step(tool_name: str, title: str, summary: str | None = None) -> None:
-    if not tool_name or not title:
-        return
-    normalized_title = title.strip()
-    normalized_summary = (summary or title).strip()
-    if not normalized_title:
-        return
-    _tool_steps[tool_name] = ToolStepDescription(
-        title=normalized_title,
-        summary=normalized_summary or normalized_title,
-    )
-
-
-def build_tool_step(tool_name: str, title: str, summary: str | None = None) -> ToolStepDescription | None:
+def build_tool_step(
+    tool_name: str,
+    title: str,
+    summary: str | None = None,
+) -> ToolStepDescription | None:
     if not tool_name or not title:
         return None
     normalized_title = title.strip()
@@ -54,26 +57,6 @@ def build_tool_step(tool_name: str, title: str, summary: str | None = None) -> T
         title=normalized_title,
         summary=(summary or title).strip() or normalized_title,
     )
-
-
-def register_tool_label(tool_name: str, label: str) -> None:
-    register_tool_step(tool_name, label, label)
-
-
-def tool_step(tool_name: str) -> ToolStepDescription:
-    return _tool_steps.get(tool_name, _infer_tool_step(tool_name))
-
-
-def context_tool_step(context: Any | None, tool_name: str) -> ToolStepDescription:
-    if context is not None:
-        description = context.tool_steps.get(tool_name)
-        if description is not None:
-            return description
-    return tool_step(tool_name)
-
-
-def tool_label(tool_name: str) -> str:
-    return tool_step(tool_name).title
 
 
 def _infer_tool_step(tool_name: str) -> ToolStepDescription:
@@ -112,11 +95,8 @@ def _infer_tool_step(tool_name: str) -> ToolStepDescription:
         )
 
     readable = " ".join(parts).strip()
-    if readable:
-        title = readable[:1].upper() + readable[1:]
-    else:
-        title = "核对业务事实"
+    title = readable[:1].upper() + readable[1:] if readable else "核对业务事实"
     return ToolStepDescription(
         title=title[:24],
-        summary=f"正在核对与 {title} 相关的事实和条件" if title else "正在核对可用事实和条件",
+        summary=f"正在核对与 {title} 相关的事实和条件",
     )
