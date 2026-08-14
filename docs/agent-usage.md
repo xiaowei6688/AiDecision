@@ -1,5 +1,8 @@
 # Agent Usage
 
+新增业务 Agent 和业务系统时，参见
+[plugin-integration-guide.md](</Users/levin/Documents/PythonCode/AiDecision/docs/plugin-integration-guide.md>)。
+
 ## 启动
 
 ```bash

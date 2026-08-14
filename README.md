@@ -19,6 +19,7 @@ uv run uvicorn app.main:app --reload
 ```
 
 详细使用说明见 [docs/agent-usage.md](</Users/levin/Documents/PythonCode/AiDecision/docs/agent-usage.md>).
+新业务接入步骤见 [docs/plugin-integration-guide.md](</Users/levin/Documents/PythonCode/AiDecision/docs/plugin-integration-guide.md>).
 
 ## Business Integrations
 
