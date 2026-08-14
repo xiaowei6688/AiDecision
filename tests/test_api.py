@@ -179,12 +179,11 @@ def test_http_resume_endpoint_returns_event_and_state() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["event"]["type"] == "dst_state"
-    assert body["event"]["data"]["resumed"] == "approve"
+    assert body["event"] == {}
     assert body["state"]["session_id"] == "demo"
 
 
-def test_chat_websocket_returns_message_and_dst_state() -> None:
+def test_chat_websocket_returns_message_without_dst_state() -> None:
     app = create_app(
         settings=Settings(_env_file=None, auth_enabled=False),
         session_service=FakeSessionService(),
@@ -199,12 +198,9 @@ def test_chat_websocket_returns_message_and_dst_state() -> None:
             websocket.send_json({"type": "message", "content": "hello"})
 
             message = websocket.receive_json()
-            state = websocket.receive_json()
 
     assert message["type"] == "message"
     assert message["content"] == "echo: hello"
-    assert state["type"] == "dst_state"
-    assert state["data"]["intent"] == "test"
 
 
 def test_chat_websocket_without_session_id_creates_session() -> None:
@@ -222,7 +218,7 @@ def test_chat_websocket_without_session_id_creates_session() -> None:
     assert ack["data"]["created"] is True
 
 
-def test_chat_websocket_accepts_resume_event() -> None:
+def test_chat_websocket_filters_dst_state_resume_event() -> None:
     app = create_app(
         settings=Settings(_env_file=None, auth_enabled=False),
         session_service=FakeSessionService(),
@@ -242,13 +238,11 @@ def test_chat_websocket_accepts_resume_event() -> None:
                 }
             )
 
-            resume_result = websocket.receive_json()
-            state = websocket.receive_json()
+            websocket.send_json({"type": "ping", "request_id": "after-resume"})
+            pong = websocket.receive_json()
 
-    assert resume_result["type"] == "dst_state"
-    assert resume_result["data"]["resumed"] == "clarify"
-    assert resume_result["data"]["content"] == "会议主题是 Q3 产品规划"
-    assert state["type"] == "dst_state"
+    assert pong["type"] == "pong"
+    assert pong["request_id"] == "after-resume"
 
 
 def test_single_connection_routes_to_the_client_selected_session() -> None:
@@ -269,9 +263,7 @@ def test_single_connection_routes_to_the_client_selected_session() -> None:
                 "content": "hello",
             })
             message = websocket.receive_json()
-            state = websocket.receive_json()
 
     assert message["session_id"] == session_id
     assert message["request_id"] == "request-1"
     assert message["parent_message_id"] == "message-1"
-    assert state["session_id"] == session_id

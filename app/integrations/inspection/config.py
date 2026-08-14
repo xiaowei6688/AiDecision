@@ -22,6 +22,7 @@ class InspectionSettings(BaseSettings):
     )
     api_timeout_seconds: float = Field(default=30.0, gt=0.0)
     plan_detail_url: str | None = Field(default=None)
+    text_to_sql_datasource: str = "inspection_mysql"
     auth_token: str | None = Field(
         default=None,
         description="Static AllCore bearer token for the inspection system.",

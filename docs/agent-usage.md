@@ -74,6 +74,7 @@ uv run uvicorn app.main:app --reload
 
 - 配置放在该 integration 自己的目录，例如 `app/integrations/inspection/.env`
 - 模板见 `app/integrations/inspection/.env.example`
+- 语义查询的 datasource 也应按 integration 配置，例如 inspection 默认使用 `INSPECTION_TEXT_TO_SQL_DATASOURCE=inspection_mysql`
 - `INSPECTION_AUTH_TOKEN`：静态上游 token
 - 或 `INSPECTION_AUTH_LOGIN_URL` + 用户名/密码 + basic auth + tenant id：由系统登录获取
 

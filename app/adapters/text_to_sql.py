@@ -31,10 +31,12 @@ class TextToSqlClient:
 
         body = {
             "datasource": datasource,
-            "question": question,
-            "filters": filters or {},
-            "limit": limit,
+            "question": question
         }
+        if filters:
+            body["filters"] = filters
+        if limit is not None:
+            body["limit"] = limit
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         req = request.Request(
             f"{self._base_url}",
@@ -46,6 +48,14 @@ class TextToSqlClient:
         try:
             with request.urlopen(req, timeout=self._timeout_seconds) as response:
                 raw = response.read().decode("utf-8")
+        except error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            return {
+                "status": "failed",
+                "message": f"语义查询服务返回 HTTP {exc.code}：{body or exc.reason}",
+                "data": {"status_code": exc.code, "body": body},
+                "error_code": "TEXT_TO_SQL_REQUEST_FAILED",
+            }
         except error.URLError as exc:
             return {
                 "status": "failed",

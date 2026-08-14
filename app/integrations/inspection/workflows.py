@@ -66,11 +66,12 @@ def inspection_query_coverage(
     if not line:
         return _error("missing_input", "线路名称不能为空")
     settings = get_settings()
+    inspection_settings = get_inspection_settings()
     result = TextToSqlClient(
         settings.text_to_sql_base_url,
         settings.text_to_sql_timeout_seconds,
     ).query(
-        datasource="inspection_towers",
+        datasource=inspection_settings.text_to_sql_datasource,
         question=f"查询线路名称为'{line}'的杆塔、航迹和机场覆盖情况",
         filters={"line_name": line, **(filters or {})},
     )

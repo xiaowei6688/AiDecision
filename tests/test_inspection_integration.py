@@ -13,7 +13,7 @@ from app.integrations.inspection.adapter import InspectionAdapter
 from app.integrations.inspection.auth import InspectionAuthClient
 from app.integrations.inspection.config import InspectionSettings
 from app.integrations.inspection.ui import inspection_action_result_projection, inspection_human_interrupt_projection
-from app.integrations.inspection.workflows import inspection_query_plan_detail
+from app.integrations.inspection.workflows import inspection_query_coverage, inspection_query_plan_detail
 from app.actions.schemas import ActionResult
 from app.integrations.projections import (
     project_action_result,
@@ -187,6 +187,38 @@ def test_inspection_plan_detail_uses_allcore_auth_header(monkeypatch: pytest.Mon
             "json": {"id": "plan-1"},
             "headers": {"allcore-auth": "bearer static-token", "Tenant-Id": "tenant-1"},
             "timeout": 12.0,
+        }
+    ]
+
+
+def test_inspection_query_coverage_uses_integration_datasource(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def query(self, datasource: str, question: str, filters: dict[str, object] | None = None) -> dict[str, object]:
+            calls.append({"datasource": datasource, "question": question, "filters": filters})
+            return {"status": "success", "data": {"rows": []}}
+
+    monkeypatch.setattr(
+        "app.integrations.inspection.workflows.get_inspection_settings",
+        lambda: InspectionSettings(
+            _env_file=None,
+            text_to_sql_datasource="inspection_mysql",
+        ),
+    )
+    monkeypatch.setattr("app.integrations.inspection.workflows.TextToSqlClient", FakeClient)
+
+    result = inspection_query_coverage.invoke({"line_name": "线路A"})
+
+    assert result["ok"] is True
+    assert calls == [
+        {
+            "datasource": "inspection_mysql",
+            "question": "查询线路名称为'线路A'的杆塔、航迹和机场覆盖情况",
+            "filters": {"line_name": "线路A"},
         }
     ]
 

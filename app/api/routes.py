@@ -127,7 +127,7 @@ async def send_session_message(
         metadata=request.metadata if request is not None else {},
     )
     state = await session_service.get_state(session_id)
-    return InteractionResponse(event=event, state=state)
+    return InteractionResponse(event=_public_event(event), state=state)
 
 
 @router.post("/sessions/{session_id}/resume")
@@ -141,4 +141,10 @@ async def resume_session(
     await _ensure_access(access, session_id, auth)
     event = await session_service.resume_event(session_id, request)
     state = await session_service.get_state(session_id)
-    return InteractionResponse(event=event, state=state)
+    return InteractionResponse(event=_public_event(event), state=state)
+
+
+def _public_event(event: dict[str, Any]) -> dict[str, Any]:
+    if event.get("type") == "dst_state":
+        return {}
+    return event

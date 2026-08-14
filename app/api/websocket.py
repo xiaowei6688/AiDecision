@@ -98,18 +98,7 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
                 event["request_id"] = client_event.request_id
                 event["parent_message_id"] = client_event.message_id
                 event["session_id"] = event_session_id
-                await websocket.send_json(event)
-                state = await session_service.get_state(event_session_id)
-                await _send(
-                    websocket,
-                    WebSocketServerEvent(
-                        type=ServerEventType.DST_STATE,
-                        session_id=event_session_id,
-                        request_id=client_event.request_id,
-                        message_id=str(uuid4()),
-                        data=state.model_dump(),
-                    ),
-                )
+                await _send_event(websocket, event)
                 continue
 
             if client_event.type == ClientEventType.RESUME:
@@ -123,19 +112,7 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
                 event["request_id"] = client_event.request_id
                 event["parent_message_id"] = client_event.message_id
                 event["session_id"] = event_session_id
-                await websocket.send_json(event)
-                state = await session_service.get_state(event_session_id)
-                await _send(
-                    websocket,
-                    WebSocketServerEvent(
-                        type=ServerEventType.DST_STATE,
-                        session_id=event_session_id,
-                        request_id=client_event.request_id,
-                        message_id=str(uuid4()),
-                        parent_message_id=client_event.message_id,
-                        data=state.model_dump(),
-                    ),
-                )
+                await _send_event(websocket, event)
                 continue
 
             if not client_event.content:
@@ -150,20 +127,7 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
                 event["session_id"] = event_session_id
                 event["request_id"] = client_event.request_id
                 event["parent_message_id"] = client_event.message_id
-                await websocket.send_json(event)
-
-            state = await session_service.get_state(event_session_id)
-            await _send(
-                websocket,
-                WebSocketServerEvent(
-                    type=ServerEventType.DST_STATE,
-                    session_id=event_session_id,
-                    request_id=client_event.request_id,
-                    message_id=str(uuid4()),
-                    parent_message_id=client_event.message_id,
-                    data=state.model_dump(),
-                ),
-            )
+                await _send_event(websocket, event)
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected: session_id=%s", session_id)
     except Exception as exc:  # pragma: no cover - defensive API boundary
@@ -173,6 +137,12 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
 
 async def _send(websocket: WebSocket, event: WebSocketServerEvent) -> None:
     await websocket.send_json(event.model_dump(mode="json"))
+
+
+async def _send_event(websocket: WebSocket, event: dict[str, object]) -> None:
+    if event.get("type") == ServerEventType.DST_STATE.value:
+        return
+    await websocket.send_json(event)
 
 
 async def _send_error(
