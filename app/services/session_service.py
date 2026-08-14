@@ -205,6 +205,15 @@ class SessionService:
                 "data": frontend_callback_completion,
             }
 
+        frontend_callback_requirement = self._frontend_callback_requirement_from_event(event)
+        if frontend_callback_requirement is not None:
+            return {
+                "type": ServerEventType.MESSAGE.value,
+                "session_id": session_id,
+                "content": frontend_callback_requirement.get("message") or "请补充前端执行结果。",
+                "data": frontend_callback_requirement,
+            }
+
         if isinstance(event, dict) and "__interrupt__" in event:
             interrupts = self._jsonable(event["__interrupt__"])
             projected = project_human_interrupt(interrupts if isinstance(interrupts, list) else [interrupts])
@@ -257,6 +266,25 @@ class SessionService:
                 "status": candidate.get("status"),
                 "action_id": candidate.get("action_id"),
                 "message": candidate.get("message"),
+                "data": self._jsonable(data),
+            }
+        return None
+
+    def _frontend_callback_requirement_from_event(self, event: Any) -> dict[str, Any] | None:
+        for candidate in self._candidate_dicts(event):
+            if candidate.get("status") != "failed" or candidate.get("error_code") != "ACTION_RESULT_REQUIRED":
+                continue
+            data = candidate.get("data")
+            if not isinstance(data, dict):
+                continue
+            pending = data.get("pendingAction")
+            if not isinstance(pending, dict) or pending.get("executionMode") != "frontend_callback":
+                continue
+            return {
+                "status": candidate.get("status"),
+                "action_id": candidate.get("action_id"),
+                "message": candidate.get("message"),
+                "error_code": candidate.get("error_code"),
                 "data": self._jsonable(data),
             }
         return None

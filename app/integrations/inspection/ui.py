@@ -93,6 +93,20 @@ def inspection_frontend_callback_resume_projection(
             },
         }
 
+    action_result_code = _first_non_empty(data, "actionCode", "action_code")
+    if action_result_code != "createTempOrder":
+        return {
+            "status": "failed",
+            "message": "巡检工单创建结果需要通过 actionResult 回传。",
+            "error_code": "ACTION_RESULT_REQUIRED",
+            "data": {
+                "pendingAction": pending_payload,
+                "frontendResult": data,
+                "final": False,
+                "nextUserAction": "请在前端完成工单创建后回传 actionResult。",
+            },
+        }
+
     message = data.get("message") or resume_value.get("content") or "巡检工单已创建成功。"
     return {
         "status": "success",

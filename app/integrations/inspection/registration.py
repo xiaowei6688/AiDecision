@@ -20,6 +20,7 @@ from app.integrations.inspection.ui import (
     inspection_frontend_callback_resume_projection,
     inspection_human_interrupt_projection,
 )
+from app.integrations.inspection.websocket_actions import inspection_work_order_action_result_to_resume
 from app.integrations.inspection.workflows import (
     inspection_build_work_order_fill_state,
     inspection_query_coverage,
@@ -31,6 +32,7 @@ from app.integrations.projections import (
     register_frontend_callback_resume_projection,
     register_human_interrupt_projection,
 )
+from app.integrations.websocket_actions import register_action_result_handler
 from app.integrations.tools import register_integration_tool
 
 
@@ -49,6 +51,7 @@ def register_inspection_projections() -> None:
     register_action_result_projection(inspection_action_result_projection)
     register_human_interrupt_projection(inspection_human_interrupt_projection)
     register_frontend_callback_resume_projection(inspection_frontend_callback_resume_projection)
+    register_action_result_handler(inspection_work_order_action_result_to_resume)
 
 
 def register_inspection_tools() -> None:

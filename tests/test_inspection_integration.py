@@ -260,6 +260,26 @@ def test_inspection_plan_frontend_callback_finishes_plan_flow_only() -> None:
     assert "明确发起创建工单" in projected["data"]["nextUserAction"]
 
 
+def test_inspection_work_order_frontend_callback_requires_action_result() -> None:
+    projected = inspection_frontend_callback_resume_projection(
+        {
+            "status": "requires_confirmation",
+            "action_id": "inspection.create_work_order",
+            "actionCode": "createTempOrder",
+            "executePayload": {"planGuid": "plan-1"},
+        },
+        {
+            "action": "approve",
+            "content": "确认执行此操作",
+            "data": {},
+        },
+    )
+
+    assert projected["status"] == "failed"
+    assert projected["error_code"] == "ACTION_RESULT_REQUIRED"
+    assert "actionResult" in projected["message"]
+
+
 def test_inspection_auth_client_fetches_and_caches_login_token(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, object]] = []
 
