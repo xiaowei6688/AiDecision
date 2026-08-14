@@ -37,7 +37,7 @@ class TextToSqlClient:
         }
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         req = request.Request(
-            f"{self._base_url}/query",
+            f"{self._base_url}",
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",

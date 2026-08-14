@@ -9,6 +9,7 @@ from app.agents.state import default_dst_metadata
 from app.services.context_compressor import ContextCompressor
 from app.schemas.chat import HumanResumeRequest, SessionStateResponse
 from app.core.runtime_context import RequestRuntimeContext, reset_runtime_context, set_runtime_context
+from app.integrations.projections import project_human_interrupt
 
 
 class SessionService:
@@ -191,11 +192,15 @@ class SessionService:
         """将LangGraph流事件转换为前端友好的字典."""
 
         if isinstance(event, dict) and "__interrupt__" in event:
-            return {
+            interrupts = self._jsonable(event["__interrupt__"])
+            projected = project_human_interrupt(interrupts if isinstance(interrupts, list) else [interrupts])
+            payload = {
                 "type": "human_action_required",
                 "session_id": session_id,
-                "data": {"interrupts": self._jsonable(event["__interrupt__"])},
+                "data": {"interrupts": interrupts},
             }
+            payload.update(projected)
+            return payload
 
         text = self._extract_latest_ai_text(event)
         if text:

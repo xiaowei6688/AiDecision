@@ -29,12 +29,32 @@ def inspection_action_result_projection(result: ActionResult) -> dict[str, objec
         return {}
     return {
         "question": question,
+        "businessId": "inspection",
         "actionCode": action_code,
         "routePath": route_path,
         "executeApi": execute_api,
         "executeMethod": "POST",
         "executePayload": params,
         "displayFields": _display_fields(action_id, params),
+    }
+
+
+def inspection_human_interrupt_projection(interrupts: list[object]) -> dict[str, object]:
+    if not interrupts:
+        return {}
+    first = interrupts[0]
+    if not isinstance(first, dict):
+        return {}
+    payload = first.get("payload")
+    if not isinstance(payload, dict) or payload.get("businessId") != "inspection":
+        return {}
+    flattened = {**first, **payload}
+    return {
+        "content": first.get("question"),
+        "data": {
+            **payload,
+            "interrupts": [flattened],
+        },
     }
 
 

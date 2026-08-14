@@ -49,8 +49,11 @@ uv run uvicorn app.main:app --reload
 
 1. `POST /sessions` 创建会话
 2. `POST /sessions/{session_id}/messages` 发送消息
-3. Agent 需要人工确认时会返回 `human_action_required`
-4. `POST /sessions/{session_id}/resume` 或 WebSocket `resume` 继续执行
+3. Agent 普通追问会返回 `message`
+4. Agent 需要最终确认、审批或前端执行动作时会返回 `human_action_required`
+5. `POST /sessions/{session_id}/resume` 或 WebSocket `resume` 继续执行
+
+不同 integration 可以注册自己的 WebSocket projection，定制 `human_action_required` 的 `data` 结构和兼容字段。inspection 的普通补字段追问不进入 `human_action_required`；只有计划或工单数据组装完成、需要旧前端确认执行时才进入确认事件。
 
 ### 接入新业务
 

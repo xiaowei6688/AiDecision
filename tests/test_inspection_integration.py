@@ -12,10 +12,15 @@ from app.integrations.inspection.models import CreateInspectionWorkOrderInput
 from app.integrations.inspection.adapter import InspectionAdapter
 from app.integrations.inspection.auth import InspectionAuthClient
 from app.integrations.inspection.config import InspectionSettings
-from app.integrations.inspection.ui import inspection_action_result_projection
+from app.integrations.inspection.ui import inspection_action_result_projection, inspection_human_interrupt_projection
 from app.integrations.inspection.workflows import inspection_query_plan_detail
 from app.actions.schemas import ActionResult
-from app.integrations.projections import register_action_result_projection, project_action_result
+from app.integrations.projections import (
+    project_action_result,
+    project_human_interrupt,
+    register_action_result_projection,
+    register_human_interrupt_projection,
+)
 
 
 def test_inspection_actions_are_confirmed_writes() -> None:
@@ -71,6 +76,31 @@ def test_inspection_confirmation_projection_is_integration_owned() -> None:
     register_action_result_projection(inspection_action_result_projection)
     assert inspection_action_result_projection(result)["actionCode"] == "createTempOrder"
     assert project_action_result(result)["executeApi"] == "/order/createTempOrder"
+
+
+def test_inspection_human_interrupt_projection_flattens_legacy_payload() -> None:
+    interrupt = {
+        "question": "请确认是否创建以下巡检工单",
+        "allowed_actions": ["approve", "reject", "edit"],
+        "recommended_action": "approve",
+        "ui_type": "confirmation",
+        "payload": {
+            "businessId": "inspection",
+            "actionCode": "createTempOrder",
+            "executeApi": "/order/createTempOrder",
+            "executePayload": {"planGuid": "plan-1"},
+            "confirmation_token": "token-1",
+        },
+    }
+
+    register_human_interrupt_projection(inspection_human_interrupt_projection)
+    projected = project_human_interrupt([interrupt])
+
+    assert projected["content"] == "请确认是否创建以下巡检工单"
+    assert projected["data"]["businessId"] == "inspection"
+    assert projected["data"]["actionCode"] == "createTempOrder"
+    assert projected["data"]["executeApi"] == "/order/createTempOrder"
+    assert projected["data"]["interrupts"][0]["confirmation_token"] == "token-1"
 
 
 def test_inspection_auth_client_fetches_and_caches_login_token(monkeypatch: pytest.MonkeyPatch) -> None:

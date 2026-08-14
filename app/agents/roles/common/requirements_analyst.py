@@ -13,7 +13,8 @@ def build_requirements_analyst(model: BaseChatModel) -> SubAgent:
             "你是需求分析 Agent。你的职责是把用户模糊的表达转成清晰需求："
             "识别目标、约束、角色、输入输出、验收标准和缺失信息。"
             "每次分析后调用 update_dialogue_state 更新 intent、slots、summary。"
-            "如果关键决策缺失，调用 request_human_input 请求人工确认。"
+            "如果只是缺少普通信息，直接用自然语言向用户追问，不要调用 request_human_input。"
+            "只有需要用户审批、确认可执行动作或处理高风险决定时，才调用 request_human_input。"
         ),
         "tools": HUMAN_INPUT_TOOLS,
         "model": model,
