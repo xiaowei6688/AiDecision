@@ -1,4 +1,7 @@
+import pytest
+
 from app.tools.base_tool import (
+    call_business_action,
     _format_human_resume_for_tool,
     _slots_from_human_resume,
     _summary_from_human_resume,
@@ -7,6 +10,8 @@ from app.actions.schemas import ActionResult
 from app.tools.dynamic_tools import build_agent_tools
 from app.agents.state import merge_dict_state
 from app.integrations.projections import project_action_result
+from app.integrations.inspection.ui import inspection_action_result_projection
+from app.integrations.projections import register_action_result_projection
 from app.integrations.bootstrap import register_integrations, register_business_agents
 from app.actions.executor import default_action_executor
 from app.actions.policy import default_policy_engine
@@ -100,3 +105,48 @@ def test_action_result_projection_defaults_to_empty_dict_without_plugins() -> No
     )
 
     assert project_action_result(result) == {}
+
+
+@pytest.mark.asyncio
+async def test_frontend_callback_action_interrupts_until_frontend_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    register_action_result_projection(inspection_action_result_projection)
+    interrupts: list[dict[str, object]] = []
+
+    async def execute(**kwargs: object) -> ActionResult:
+        return ActionResult(
+            status="requires_confirmation",
+            action_id="inspection.create_plan",
+            message="请确认是否创建以下巡检计划",
+            data={
+                "action": {"title": "创建巡检计划"},
+                "params": {"planName": "临时计划"},
+                "confirmation_token": "token-1",
+            },
+        )
+
+    def fake_interrupt(action: dict[str, object]) -> dict[str, object]:
+        interrupts.append(action)
+        return {
+            "action": "approve",
+            "content": "前端已创建巡检计划",
+            "data": {
+                "success": True,
+                "id": "plan-1",
+                "planGuid": "plan-1",
+            },
+        }
+
+    monkeypatch.setattr("app.tools.base_tool.default_action_executor.execute", execute)
+    monkeypatch.setattr("app.tools.base_tool.interrupt", fake_interrupt)
+
+    result = await call_business_action.ainvoke({
+        "action_id": "inspection.create_plan",
+        "params": {"planName": "临时计划"},
+    })
+
+    assert interrupts[0]["payload"]["executionMode"] == "frontend_callback"
+    assert interrupts[0]["payload"]["actionCode"] == "createPlan"
+    assert interrupts[0]["payload"]["executeApi"] == "/plan/create"
+    assert result["status"] == "success"
+    assert result["message"] == "前端已创建巡检计划"
+    assert result["data"]["frontendResult"]["planGuid"] == "plan-1"

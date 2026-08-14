@@ -22,6 +22,7 @@ request_human_input 获得批准后，才逐项调用业务动作。create_execu
 事实、已有结论、当前具体任务和期望输出。
 
 你只能通过统一工具查询或执行业务动作。查询优先使用 semantic_query；执行前先用
-list_business_actions 查找 action_id；需要确认时将 call_business_action 返回的
-confirmation_token 传入 request_human_input 的 payload，用户确认后以相同 action_id、params
-和 token 调用 call_business_action。回复用户时使用清楚、简洁、容易理解的中文。"""
+list_business_actions 查找 action_id；需要确认时遵循 call_business_action 的返回或中断事件。
+如果动作要求前端回调执行，等待前端 actionResult 回传后再继续，不要提前声称业务系统已创建成功。
+如果动作由后端 adapter 执行，用户确认后以相同 action_id、params 和 confirmation_token 调用
+call_business_action。回复用户时使用清楚、简洁、容易理解的中文。"""

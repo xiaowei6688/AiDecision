@@ -301,8 +301,6 @@ async def execute_execution_plan(
 def semantic_query(
     datasource: str,
     question: str,
-    filters: dict[str, Any] | None = None,
-    limit: int | None = None,
 ) -> dict[str, Any]:
     """调用外部 text-to-sql 语义查询服务，查询指定 datasource 的数据。"""
 
@@ -339,7 +337,11 @@ async def call_business_action(
         context=context,
         confirmation_token=confirmation_token,
     )
-    return _action_result_to_dict(result)
+    payload = _action_result_to_dict(result)
+    if payload.get("status") == "requires_confirmation" and payload.get("executionMode") == "frontend_callback":
+        resume_value = interrupt(_frontend_callback_human_action(payload))
+        return _frontend_callback_resume_result(payload, resume_value)
+    return payload
 
 
 def _action_result_to_dict(result: ActionResult) -> dict[str, Any]:
@@ -352,6 +354,51 @@ def _action_result_to_dict(result: ActionResult) -> dict[str, Any]:
     }
     payload.update(project_action_result(result))
     return payload
+
+
+def _frontend_callback_human_action(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": HumanActionStatus.PENDING,
+        "question": payload.get("question") or payload.get("message") or "请确认是否继续",
+        "allowed_actions": ["approve", "reject", "edit"],
+        "recommended_action": "approve",
+        "ui_type": "confirmation",
+        "fields": [],
+        "payload": payload,
+    }
+
+
+def _frontend_callback_resume_result(
+    pending_payload: dict[str, Any],
+    resume_value: Any,
+) -> dict[str, Any]:
+    if not isinstance(resume_value, dict):
+        return {
+            "status": "failed",
+            "action_id": pending_payload.get("action_id"),
+            "message": f"前端执行结果无效：{resume_value}",
+            "data": {"pendingAction": pending_payload, "resume": resume_value},
+            "error_code": "INVALID_FRONTEND_ACTION_RESULT",
+        }
+    action = resume_value.get("action")
+    data = resume_value.get("data") if isinstance(resume_value.get("data"), dict) else {}
+    if action == "reject":
+        return {
+            "status": "failed",
+            "action_id": pending_payload.get("action_id"),
+            "message": resume_value.get("content") or "用户已取消前端执行动作。",
+            "data": {"pendingAction": pending_payload, "frontendResult": data},
+            "error_code": "FRONTEND_ACTION_REJECTED",
+        }
+    return {
+        "status": "success" if action == "approve" else "updated",
+        "action_id": pending_payload.get("action_id"),
+        "message": resume_value.get("content") or data.get("message") or "前端已返回业务动作结果。",
+        "data": {
+            "pendingAction": pending_payload,
+            "frontendResult": data,
+        },
+    }
 
 
 def _format_human_resume_for_tool(resume_value: Any) -> str:

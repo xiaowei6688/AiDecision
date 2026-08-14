@@ -73,7 +73,6 @@ def inspection_query_coverage(
     ).query(
         datasource=inspection_settings.text_to_sql_datasource,
         question=f"查询线路名称为'{line}'的杆塔、航迹和机场覆盖情况",
-        filters={"line_name": line, **(filters or {})},
     )
     if result.get("status") != "success":
         return result
