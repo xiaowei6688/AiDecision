@@ -55,7 +55,7 @@ def register_inspection_tools(context: PluginContext) -> None:
     for name, title, summary in (
         ("inspection_query_plan_detail", "核对巡检计划详情", "正在核对计划的真实台账信息和后续工单条件"),
         ("inspection_query_device_data", "核对线路杆塔台账", "正在按线路和范围核对杆塔 UID、名称、专业及所属线路"),
-        ("inspection_build_plan_fill_state", "整理计划确认信息", "正在按旧巡检系统规则整理计划类型、名称和巡检对象"),
+        ("inspection_build_plan_fill_state", "整理计划确认信息", "正在整理计划类型、名称和巡检对象"),
         ("inspection_query_coverage", "分析巡检覆盖条件", "正在结合机场覆盖情况判断可用的巡检方式"),
         ("inspection_build_work_order_fill_state", "整理工单确认信息", "正在把计划、设备和巡检方式整理成待确认的工单数据"),
     ):

@@ -25,7 +25,7 @@ CREATE_PLAN = ActionSpec(
     system="inspection",
     inputs=[
         ActionInputSpec("planType", description="计划类型字典键，例如临时计划为 5"),
-        ActionInputSpec("planName", description="按旧巡检系统规则生成的唯一计划名称"),
+        ActionInputSpec("planName", description="按规则生成的唯一计划名称"),
         ActionInputSpec("inspectStartTime", description="开始时间"),
         ActionInputSpec("inspectEndTime", description="结束时间"),
         ActionInputSpec(

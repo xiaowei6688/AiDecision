@@ -21,7 +21,7 @@ from app.integrations.inspection.config import get_inspection_settings
 
 @tool
 def inspection_query_device_data(parent_device_name: str, ranges: str = "全部") -> dict[str, Any]:
-    """按旧巡检系统逻辑查询线路杆塔，并确定性组装 create_plan 所需的 planObjectList。
+    """按逻辑查询线路杆塔，并确定性组装 create_plan 所需的 planObjectList。
 
     创建巡检计划前必须先调用本工具，禁止由模型自行编造 deviceGuid/parentDeviceGuid。
     """
@@ -98,7 +98,7 @@ def inspection_build_plan_fill_state(
     inspect_end_time: str,
     plan_object_list: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """按旧巡检系统规则组装计划类型、唯一计划名称和真实巡检对象。"""
+    """按规则组装计划类型、唯一计划名称和真实巡检对象。"""
 
     try:
         plan = CreateInspectionPlanInput.model_validate({
@@ -123,7 +123,7 @@ def inspection_build_plan_fill_state(
                 item["deviceName"] for item in payload["planObjectList"]
             ],
         },
-        "summary": "已按旧巡检系统规则生成计划类型、计划名称和巡检对象。",
+        "summary": "已按规则生成计划类型、计划名称和巡检对象。",
     }
 
 
