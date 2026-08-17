@@ -1,3 +1,6 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from app.actions.policy import PolicyEngine
@@ -137,6 +140,62 @@ def test_inspection_plan_fill_state_is_stable_when_action_validates_again(
     assert validated["planName"] == generated_name
 
 
+def test_inspection_plan_uses_relative_date_instead_of_model_guessed_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.tools.datetime_tool._now",
+        lambda tz: datetime(2026, 8, 17, 10, 0, 0, tzinfo=tz),
+    )
+    monkeypatch.setattr("app.integrations.inspection.models.time.time", lambda: 1787000000)
+
+    result = inspection_build_plan_fill_state.invoke({
+        "plan_type": "临时计划",
+        "time_expression": "明天的临时巡检，10kV白路线的1到4号杆塔",
+        "inspect_start_time": "2024-12-20 08:00:00",
+        "inspect_end_time": "2024-12-20 18:00:00",
+        "plan_object_list": [{
+            "deviceGuid": "tower-1",
+            "deviceName": "10kV白路线#1",
+            "major": "dms",
+            "parentDeviceGuid": "line-1",
+            "parentDeviceName": "10kV白路线",
+        }],
+    })
+
+    assert result["ok"] is True
+    assert result["executePayload"]["inspectStartTime"] == "2026-08-18 00:00:00"
+    assert result["executePayload"]["inspectEndTime"] == "2026-08-18 23:59:59"
+    assert result["executePayload"]["planName"] == (
+        "临时计划-2026-08-18-10kV白路线巡检-1787000000"
+    )
+
+
+def test_inspection_plan_rejects_historical_absolute_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.tools.datetime_tool._now",
+        lambda tz: datetime(2026, 8, 17, 10, 0, 0, tzinfo=tz),
+    )
+
+    result = inspection_build_plan_fill_state.invoke({
+        "plan_type": "临时计划",
+        "inspect_start_time": "2024-12-20 08:00:00",
+        "inspect_end_time": "2024-12-20 18:00:00",
+        "plan_object_list": [{
+            "deviceGuid": "tower-1",
+            "deviceName": "10kV白路线#1",
+            "major": "dms",
+            "parentDeviceGuid": "line-1",
+            "parentDeviceName": "10kV白路线",
+        }],
+    })
+
+    assert result["ok"] is False
+    assert result["errorCode"] == "expired_inspection_date"
+
+
 def test_inspection_plan_object_old_fields_override_blank_legacy_keys() -> None:
     payload = CreateInspectionPlanInput.model_validate({
         "planType": "5",
@@ -207,13 +266,28 @@ def test_inspection_time_window_rejects_reversed_times() -> None:
     ) == "结束时间必须晚于开始时间"
 
 
+def test_inspection_time_window_rejects_historical_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.integrations.inspection.checks._today",
+        lambda timezone: datetime(2026, 8, 17, tzinfo=ZoneInfo(timezone)),
+    )
+
+    assert valid_time_window(
+        CREATE_PLAN,
+        {"inspectStartTime": "2024-12-20 08:00:00", "inspectEndTime": "2024-12-20 18:00:00"},
+        ActionExecutionContext(),
+    ) == "巡检开始日期不能早于今天"
+
+
 def test_policy_accepts_a_valid_inspection_time_window() -> None:
     policy = PolicyEngine()
     policy.register_pre_check("inspection.valid_time_window", valid_time_window)
 
     result = policy.evaluate(CREATE_PLAN, {
-        "inspectStartTime": "2026-08-14 08:00:00",
-        "inspectEndTime": "2026-08-14 10:00:00",
+        "inspectStartTime": "2099-08-14 08:00:00",
+        "inspectEndTime": "2099-08-14 10:00:00",
     }, ActionExecutionContext())
 
     assert result.allowed

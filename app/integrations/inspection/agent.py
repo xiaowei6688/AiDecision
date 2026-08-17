@@ -25,8 +25,9 @@ inspection_agent = BusinessAgentManifest(
 缺少普通字段时，只在 missing_information 中说明需要补充什么；不要建议进入 human_action_required。
 只有计划或工单所有字段都组装完成、即将交给旧前端确认执行时，才应触发最终确认。
 计划确认前必须先取得真实 planObjectList；工单确认前必须先取得计划详情和工单填充状态。
-取得 planObjectList 后必须调用 inspection_build_plan_fill_state；计划确认与建议动作参数必须直接使用其
-executePayload，禁止自行填写中文 planType 或自由编写 planName。
+用户提供任何相对日期或自然语言日期时，必须先调用 compute_datetime 核对日期；取得 planObjectList 后，
+必须调用 inspection_build_plan_fill_state，并把用户原始时间表达（例如“明天”）原样传入 time_expression。
+计划确认与建议动作参数必须直接使用其 executePayload，禁止自行计算日期、填写中文 planType 或自由编写 planName。
 字段已经齐备时，不要继续重复查询或追问普通信息，应建议主 Agent 调用 request_human_input
 向用户发起最终确认；确认通过后再进入统一动作执行或旧前端回调流程。
 跨系统场景中，明确说明对设备、无人机、飞手、机场或其他系统事实的依赖。""",
@@ -39,6 +40,7 @@ executePayload，禁止自行填写中文 planType 或自由编写 planName。
     ),
     action_prefixes=("inspection.",),
     readonly_tool_names=(
+        "compute_datetime",
         "inspection_query_plan_detail",
         "inspection_query_device_data",
         "inspection_build_plan_fill_state",

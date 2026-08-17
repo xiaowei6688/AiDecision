@@ -12,6 +12,7 @@ from app.integrations.projections import ProjectionRegistry
 from app.integrations.tools import IntegrationToolRegistry
 from app.integrations.websocket_actions import ActionResultHandlerRegistry
 from app.tools.broker import ToolBroker
+from app.tools.datetime_tool import compute_datetime
 
 
 @dataclass
@@ -36,6 +37,12 @@ class PluginContext:
     tool_broker: ToolBroker = field(init=False)
 
     def __post_init__(self) -> None:
+        self.tools.register(compute_datetime, read_only=True)
+        self.tools.register_step(
+            "compute_datetime",
+            "核对日期时间",
+            "正在根据当前日期和业务时区核对时间表达",
+        )
         self.action_executor = BusinessActionExecutor(
             registry=self.action_registry,
             policy_engine=self.policy_engine,

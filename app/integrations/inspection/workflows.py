@@ -17,6 +17,7 @@ from app.adapters.text_to_sql import TextToSqlClient
 from app.core.config import get_settings
 from app.integrations.inspection.auth import InspectionAuthError, get_inspection_auth_client
 from app.integrations.inspection.config import get_inspection_settings
+from app.tools.datetime_tool import resolve_datetime_expression
 
 
 @tool
@@ -94,11 +95,50 @@ def inspection_query_device_data(parent_device_name: str, ranges: str = "全部"
 @tool
 def inspection_build_plan_fill_state(
     plan_type: str,
-    inspect_start_time: str,
-    inspect_end_time: str,
     plan_object_list: list[dict[str, Any]],
+    time_expression: str | None = None,
+    inspect_start_time: str | None = None,
+    inspect_end_time: str | None = None,
 ) -> dict[str, Any]:
-    """按规则组装计划类型、唯一计划名称和真实巡检对象。"""
+    """按规则组装计划；自然语言时间存在时以确定性解析结果为准。"""
+
+    if isinstance(time_expression, str) and time_expression.strip():
+        try:
+            resolved = resolve_datetime_expression(
+                time_expression,
+                get_inspection_settings().timezone,
+                compare_to_today=True,
+            )
+        except ValueError as exc:
+            return _error("invalid_datetime_expression", str(exc))
+        if resolved["is_before_today"]:
+            return _error(
+                "expired_inspection_date",
+                f"巡检日期 {resolved['date']} 已早于今天 {resolved['today']}，请提供新的巡检日期。",
+            )
+        span = resolved.get("time_span")
+        if isinstance(span, dict):
+            inspect_start_time = str(span["start_datetime"])
+            inspect_end_time = str(span["end_datetime"])
+        else:
+            inspect_start_time = f"{resolved['date']} 00:00:00"
+            inspect_end_time = f"{resolved['date']} 23:59:59"
+    else:
+        if not inspect_start_time or not inspect_end_time:
+            return _error("missing_input", "缺少巡检时间")
+        try:
+            resolved = resolve_datetime_expression(
+                inspect_start_time,
+                get_inspection_settings().timezone,
+                compare_to_today=True,
+            )
+        except ValueError as exc:
+            return _error("invalid_datetime_expression", str(exc))
+        if resolved["is_before_today"]:
+            return _error(
+                "expired_inspection_date",
+                f"巡检日期 {resolved['date']} 已早于今天 {resolved['today']}，请提供新的巡检日期。",
+            )
 
     try:
         plan = CreateInspectionPlanInput.model_validate({

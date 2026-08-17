@@ -47,7 +47,7 @@ def test_plugin_contexts_are_isolated_per_application() -> None:
     with pytest.raises(KeyError):
         empty_context.action_registry.get("inspection.create_plan")
     assert len(inspection_context.tools) > 0
-    assert len(empty_context.tools) == 0
+    assert [tool.name for tool in empty_context.tools.values()] == ["compute_datetime"]
     assert inspection_context.projections.counts()["action_results"] > 0
     assert empty_context.projections.counts()["action_results"] == 0
 

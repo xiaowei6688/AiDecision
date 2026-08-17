@@ -12,6 +12,7 @@ from app.agents.state import DialogueStage, HumanActionStatus
 from app.adapters.text_to_sql import TextToSqlClient
 from app.core.config import get_settings
 from app.core.runtime_context import get_runtime_context
+from app.tools.datetime_tool import compute_datetime
 from app.domain.plan_store import default_plan_store
 from app.domain.plans import ExecutionPlan, PlanStatus, validate_execution_plan
 
@@ -592,5 +593,6 @@ AGENT_TOOLS = [
     approve_execution_plan,
     execute_execution_plan,
     semantic_query,
+    compute_datetime,
     call_business_action,
 ]
