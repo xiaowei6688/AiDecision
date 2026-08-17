@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from typing import Any
@@ -317,16 +318,34 @@ def _merge_tower_coverage(
     index: int,
 ) -> dict[str, Any]:
     device_guid = _first_present(tower, "device_guid", "deviceGuid", "tower_guid", "tower_uid")
+    parent_device_guid = _first_present(
+        tower,
+        "parent_device_guid",
+        "parentDeviceGuid",
+        "line_guid",
+        "line_uid",
+    )
     longitude = _as_float(_first_present(tower, "longitude", "lng"))
     latitude = _as_float(_first_present(tower, "latitude", "lat"))
     airport = _nearest_airport(longitude, latitude, airports)
-    routes = routes_by_device.get(str(device_guid), [])
+    routes = [
+        {
+            **route,
+            "parentDeviceGuid": route.get("parentDeviceGuid") or parent_device_guid,
+        }
+        for route in routes_by_device.get(str(device_guid), [])
+    ]
     first_route = routes[0] if routes else {}
+    route_fields = {
+        key: value
+        for key, value in first_route.items()
+        if key not in {"deviceGuid", "parentDeviceGuid"}
+    }
     return {
         **tower,
         "deviceGuid": device_guid,
         "deviceName": _first_present(tower, "device_name", "deviceName", "basic_tower_ledger_name", "tower_name"),
-        "parentDeviceGuid": _first_present(tower, "parent_device_guid", "parentDeviceGuid", "line_guid", "line_uid"),
+        "parentDeviceGuid": parent_device_guid,
         "parentDeviceName": _first_present(tower, "parent_device_name", "parentDeviceName", "basic_line_ledger_name", "line_name"),
         "major": _first_present(tower, "major", "专业") or "tms",
         "workNature": _first_present(tower, "work_nature", "workNature"),
@@ -336,7 +355,7 @@ def _merge_tower_coverage(
         "dockGuid": _first_present(airport or {}, "dock_guid", "dockGuid", "airport_guid", "airportGuid"),
         "dockName": _first_present(airport or {}, "dock_name", "dockName", "airport_name", "airportName"),
         "deviceRouteList": routes,
-        **first_route,
+        **route_fields,
     }
 
 
@@ -488,22 +507,30 @@ def inspection_query_work_order_detail(order_id: str) -> dict[str, Any]:
 
 @tool
 def inspection_build_work_order_fill_state(
-    plan: dict[str, Any],
-    coverage_rows: list[dict[str, Any]] | None = None,
+    plan: dict[str, Any] | str,
+    coverage_rows: list[dict[str, Any]] | str | None = None,
     group: str | None = None,
-    completed_groups: list[str] | None = None,
+    completed_groups: list[str] | str | None = None,
     equip_sn: str | None = None,
     flight_workers: list[str] | str | None = None,
 ) -> dict[str, Any]:
     """按机场覆盖拆分工单，每次仅组装待创建队列中的一个工单。"""
 
-    rows = coverage_rows or []
+    try:
+        normalized_plan = _coerce_mapping_argument(plan, "plan")
+        rows = _coerce_list_argument(coverage_rows, "coverage_rows")
+        normalized_completed_groups = _coerce_string_list_argument(
+            completed_groups,
+            "completed_groups",
+        )
+    except (TypeError, ValueError) as exc:
+        return _error("invalid_arguments", str(exc))
     grouped_rows = {
         "covered": [row for row in rows if _has_coverage(row)],
         "uncovered": [row for row in rows if not _has_coverage(row)],
     }
     all_groups = [name for name in ("covered", "uncovered") if grouped_rows[name]]
-    completed = {name for name in (completed_groups or []) if name in all_groups}
+    completed = {name for name in normalized_completed_groups if name in all_groups}
     pending_groups = [name for name in all_groups if name not in completed]
     selected_group = group if group in pending_groups else (pending_groups[0] if pending_groups else None)
     if selected_group is None:
@@ -520,25 +547,25 @@ def inspection_build_work_order_fill_state(
     details = [_row_to_detail(row) for row in grouped_rows[selected_group]]
     details = [detail for detail in details if detail is not None]
     method = "dock" if selected_group == "covered" else "drone"
-    major = str(plan.get("major") or (details[0].get("major") if details else None) or "tms")
-    plan_type = str(plan.get("planType") or plan.get("plan_type") or "")
+    major = str(normalized_plan.get("major") or (details[0].get("major") if details else None) or "tms")
+    plan_type = str(normalized_plan.get("planType") or normalized_plan.get("plan_type") or "")
     plan_type_code = _plan_type_code(plan_type)
     missing_fields = []
-    if not (plan.get("planGuid") or plan.get("plan_guid")):
+    if not (normalized_plan.get("planGuid") or normalized_plan.get("plan_guid")):
         missing_fields.append("planGuid")
-    if not (plan.get("inspectStartTime") or plan.get("inspect_start_time")):
+    if not (normalized_plan.get("inspectStartTime") or normalized_plan.get("inspect_start_time")):
         missing_fields.append("startDate")
-    if not (plan.get("inspectEndTime") or plan.get("inspect_end_time")):
+    if not (normalized_plan.get("inspectEndTime") or normalized_plan.get("inspect_end_time")):
         missing_fields.append("endDate")
     if method == "drone" and not equip_sn:
         missing_fields.append("equipSn")
     if method == "drone" and not flight_workers:
         missing_fields.append("flightWorkers")
     payload = {
-        "planGuid": plan.get("planGuid") or plan.get("plan_guid"),
+        "planGuid": normalized_plan.get("planGuid") or normalized_plan.get("plan_guid"),
         "priority": _work_order_priority(plan_type_code),
         "major": major,
-        "workNature": plan.get("workNature") or plan.get("work_nature") or _work_nature(major),
+        "workNature": normalized_plan.get("workNature") or normalized_plan.get("work_nature") or _work_nature(major),
         "isCycle": "0" if plan_type_code == "5" else "1",
         "inspectionMethod": method,
         "equipSn": equip_sn if method == "drone" else None,
@@ -546,9 +573,9 @@ def inspection_build_work_order_fill_state(
         "panoShot": False,
         "isRecord": "1",
         "flightWorkers": flight_workers if method == "drone" else None,
-        "workContent": _work_content(plan, details, plan_type_code),
-        "startDate": plan.get("inspectStartTime") or plan.get("inspect_start_time"),
-        "endDate": plan.get("inspectEndTime") or plan.get("inspect_end_time"),
+        "workContent": _work_content(normalized_plan, details, plan_type_code),
+        "startDate": normalized_plan.get("inspectStartTime") or normalized_plan.get("inspect_start_time"),
+        "endDate": normalized_plan.get("inspectEndTime") or normalized_plan.get("inspect_end_time"),
         "isTerrain": False,
         "orderDetailList": details,
     }
@@ -562,9 +589,9 @@ def inspection_build_work_order_fill_state(
         "routePath": "/workOrder/review",
         "filledFields": payload,
         "displayFields": {
-            "planName": plan.get("planName"),
-            "planTypeName": PLAN_TYPES.get(str(plan.get("planType")), plan.get("planTypeZh")),
-            "lineName": plan.get("lineName"),
+            "planName": normalized_plan.get("planName"),
+            "planTypeName": PLAN_TYPES.get(str(normalized_plan.get("planType")), normalized_plan.get("planTypeZh")),
+            "lineName": normalized_plan.get("lineName"),
             "workOrderGroup": selected_group,
             "inspectionMethodName": "固定机场巡检" if method == "dock" else "人工飞手无人机巡检",
             "orderDetailCount": len(details),
@@ -597,19 +624,20 @@ def _has_coverage(row: dict[str, Any]) -> bool:
 
 
 def _row_to_detail(row: dict[str, Any]) -> dict[str, Any] | None:
-    device_guid = row.get("deviceGuid") or row.get("tower_uid") or row.get("towerGuid") or row.get("杆塔uid")
-    parent_guid = row.get("parentDeviceGuid") or row.get("line_uid") or row.get("lineGuid") or row.get("线路uid")
+    device_guid = row.get("deviceGuid") or row.get("tower_guid") or row.get("tower_uid") or row.get("towerGuid") or row.get("杆塔uid")
+    parent_guid = row.get("parentDeviceGuid") or row.get("line_guid") or row.get("line_uid") or row.get("lineGuid") or row.get("线路uid")
     if not device_guid or not parent_guid:
         return None
+    major = row.get("major") or row.get("专业") or "tms"
     return {
         "dockGuid": row.get("dockGuid") or row.get("airportGuid") or row.get("airport_uid"),
         "dockName": row.get("dockName") or row.get("airportName") or row.get("airport_name"),
         "dockList": row.get("dockList"),
         "parentDeviceGuid": parent_guid,
-        "parentDeviceName": row.get("parentDeviceName") or row.get("line_name") or row.get("lineName") or row.get("线路名称"),
-        "deviceType": row.get("deviceType") or row.get("major") or row.get("专业") or "tms",
+        "parentDeviceName": row.get("parentDeviceName") or row.get("basic_line_ledger_name") or row.get("line_name") or row.get("lineName") or row.get("线路名称"),
+        "deviceType": row.get("deviceType") or major,
         "deviceGuid": device_guid,
-        "deviceName": row.get("deviceName") or row.get("tower_name") or row.get("towerName") or row.get("杆塔名称"),
+        "deviceName": row.get("deviceName") or row.get("basic_tower_ledger_name") or row.get("tower_name") or row.get("towerName") or row.get("杆塔名称"),
         "poleNature": row.get("poleNature") or row.get("pole_nature"),
         "towerSort": row.get("towerSort") or row.get("tower_sort") or row.get("sort"),
         "routeGuid": row.get("routeGuid") or row.get("route_guid"),
@@ -628,9 +656,62 @@ def _row_to_detail(row: dict[str, Any]) -> dict[str, Any] | None:
         "sort": row.get("sort") or row.get("towerSort") or row.get("tower_sort"),
         "terrain": bool(row.get("terrain", False)),
         "lineGuid": row.get("lineGuid") or parent_guid,
-        "workNature": row.get("workNature") or row.get("work_nature") or "fine_inspect_tms",
-        "major": row.get("major") or row.get("专业") or "tms",
+        "workNature": row.get("workNature") or row.get("work_nature") or _work_nature(str(major)),
+        "major": major,
     }
+
+
+def _coerce_mapping_argument(value: dict[str, Any] | str, name: str) -> dict[str, Any]:
+    parsed = _load_json_argument(value, name)
+    if not isinstance(parsed, dict):
+        raise TypeError(f"{name} 必须是对象")
+    return parsed
+
+
+def _coerce_list_argument(
+    value: list[dict[str, Any]] | str | None,
+    name: str,
+) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    parsed = _load_json_argument(value, name)
+    if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
+        raise TypeError(f"{name} 必须是对象数组")
+    return parsed
+
+
+def _coerce_string_list_argument(
+    value: list[str] | str | None,
+    name: str,
+) -> list[str]:
+    if value is None:
+        return []
+    parsed = _load_json_argument(value, name)
+    if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+        raise TypeError(f"{name} 必须是字符串数组")
+    return parsed
+
+
+def _load_json_argument(value: Any, name: str) -> Any:
+    if not isinstance(value, str):
+        return value
+    candidate = value.strip()
+    last_error: json.JSONDecodeError | None = None
+    for _ in range(3):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            try:
+                candidate = json.loads(f'"{candidate}"')
+            except json.JSONDecodeError:
+                break
+            continue
+        if isinstance(parsed, str) and parsed.strip().startswith(("{", "[")):
+            candidate = parsed.strip()
+            continue
+        return parsed
+    raise ValueError(f"{name} 不是有效的 JSON 字符串") from last_error
 
 
 def _plan_type_code(value: str) -> str:

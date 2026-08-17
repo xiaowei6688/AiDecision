@@ -722,6 +722,8 @@ def test_inspection_plan_coverage_rebuilds_legacy_tower_route_airport_chain(
     assert result["coveredCount"] == 1
     assert result["uncoveredCount"] == 1
     assert result["coveredRows"][0]["deviceGuid"] == "tower-1"
+    assert result["coveredRows"][0]["parentDeviceGuid"] == "line-1"
+    assert result["coveredRows"][0]["deviceRouteList"][0]["parentDeviceGuid"] == "line-1"
     assert result["coveredRows"][0]["dockGuid"] == "dock-1"
     assert result["coveredRows"][0]["routeGuid"] == "route-1"
     assert result["uncoveredRows"][0]["deviceGuid"] == "tower-2"

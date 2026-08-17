@@ -1,3 +1,5 @@
+import json
+
 from app.integrations.inspection.workflows import inspection_build_work_order_fill_state
 
 
@@ -24,6 +26,66 @@ def test_inspection_work_order_workflow_preserves_legacy_fill_state() -> None:
     assert state["routePath"] == "/workOrder/review"
     assert state["executePayload"]["inspectionMethod"] == "dock"
     assert state["pendingWorkOrderGroups"] == ["covered"]
+
+
+def test_inspection_work_order_accepts_stringified_model_arguments() -> None:
+    plan = {
+        "planGuid": "plan-1",
+        "planType": "5",
+        "inspectStartTime": "2026-08-18 00:00:00",
+        "inspectEndTime": "2026-08-18 23:59:59",
+    }
+    rows = [{
+        "tower_guid": "tower-1",
+        "basic_tower_ledger_name": "10kV白路线#1",
+        "line_guid": "line-1",
+        "basic_line_ledger_name": "10kV白路线",
+        "major": "dms",
+        "dockGuid": "dock-1",
+    }]
+
+    result = inspection_build_work_order_fill_state.invoke({
+        "plan": json.dumps(plan, ensure_ascii=False),
+        "coverage_rows": json.dumps(rows, ensure_ascii=False),
+        "group": "covered",
+    })
+
+    detail = result["workOrderFillState"]["executePayload"]["orderDetailList"][0]
+    assert result["ok"] is True
+    assert detail["deviceGuid"] == "tower-1"
+    assert detail["parentDeviceGuid"] == "line-1"
+    assert detail["workNature"] == "fine_inspect_dms"
+
+
+def test_inspection_work_order_accepts_backslash_escaped_model_arguments() -> None:
+    plan = {
+        "planGuid": "plan-1",
+        "planType": "3",
+        "inspectStartTime": "2026-07-27 00:00:00",
+        "inspectEndTime": "2026-08-02 23:59:59",
+    }
+    rows = [{
+        "deviceGuid": "tower-1",
+        "deviceName": "10kV白路线#1",
+        "parentDeviceGuid": "line-1",
+        "parentDeviceName": "10kV白路线",
+        "major": "dms",
+        "dockGuid": "dock-1",
+    }]
+    escaped_plan = json.dumps(plan, ensure_ascii=False).replace('"', '\\"')
+    escaped_rows = json.dumps(rows, ensure_ascii=False).replace('"', '\\"')
+
+    result = inspection_build_work_order_fill_state.invoke({
+        "plan": escaped_plan,
+        "coverage_rows": escaped_rows,
+        "group": "covered",
+    })
+
+    assert result["ok"] is True
+    assert result["workOrderFillState"]["status"] == "READY"
+    assert len(
+        result["workOrderFillState"]["executePayload"]["orderDetailList"]
+    ) == 1
 
 
 def test_inspection_work_orders_are_split_and_advanced_one_group_at_a_time() -> None:
