@@ -579,14 +579,6 @@ class SessionService:
     def _normalize_event(self, session_id: str, event: Any) -> dict[str, Any]:
         """将LangGraph流事件转换为前端友好的字典."""
 
-        task_progress = self._task_progress_from_event(event)
-        if task_progress is not None:
-            return self._task_progress_event(session_id, task_progress)
-
-        tool_step = self._tool_call_step_from_event(session_id, event)
-        if tool_step is not None:
-            return tool_step
-
         frontend_callback_completion = self._frontend_callback_completion_from_event(event)
         if frontend_callback_completion is not None:
             return {
@@ -631,6 +623,18 @@ class SessionService:
             }
             payload.update(projected)
             return payload
+
+        task_progress = self._task_progress_from_event(event)
+        if task_progress is not None:
+            progress_event = self._task_progress_event(session_id, task_progress)
+            progress_data = progress_event.get("data")
+            progress_data = progress_data if isinstance(progress_data, dict) else {}
+            if progress_data.get("status") in {"running", "completed", "failed"}:
+                return progress_event
+
+        tool_step = self._tool_call_step_from_event(session_id, event)
+        if tool_step is not None:
+            return tool_step
 
         text = self._extract_latest_ai_text(event)
         if text:

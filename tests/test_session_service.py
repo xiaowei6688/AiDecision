@@ -513,6 +513,61 @@ def test_normalize_event_prefers_frontend_callback_completion_over_confirmation(
     assert normalized["data"]["data"]["frontendResult"]["planGuid"] == "plan-1"
 
 
+def test_normalize_event_prefers_resume_completion_over_stale_pending_progress() -> None:
+    service = SessionService(agent=None)
+    event = {
+        "metadata": {
+            "task_progress": {
+                "steps": [{
+                    "id": "step-1",
+                    "title": "确认线路和杆塔范围",
+                    "status": "pending",
+                }]
+            }
+        },
+        "tools": {
+            "messages": [ToolMessage(
+                content=json.dumps({
+                    "status": "success",
+                    "action_id": "inspection.create_plan",
+                    "message": "巡检计划已创建成功",
+                    "data": {
+                        "pendingAction": {
+                            "executionMode": "frontend_callback",
+                            "actionCode": "createPlan",
+                        },
+                        "frontendResult": {"success": True},
+                        "final": True,
+                    },
+                }, ensure_ascii=False),
+                tool_call_id="tool-call-1",
+            )]
+        },
+    }
+
+    normalized = service._normalize_event("session-1", event)
+
+    assert normalized["type"] == "message"
+    assert normalized["content"] == "巡检计划已创建成功"
+
+
+def test_normalize_event_does_not_expose_pending_progress() -> None:
+    service = SessionService(agent=None)
+    event = {
+        "task_progress": {
+            "steps": [{
+                "id": "step-1",
+                "title": "确认线路和杆塔范围",
+                "status": "pending",
+            }]
+        }
+    }
+
+    normalized = service._normalize_event("session-1", event)
+
+    assert normalized["type"] == "dst_state"
+
+
 def test_normalize_event_converts_tool_calls_to_intermediate_thinking_step() -> None:
     context = PluginContext()
     context.tools.register_step(
