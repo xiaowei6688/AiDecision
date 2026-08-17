@@ -77,9 +77,33 @@ def inspection_frontend_callback_resume_projection(
 
     data = resume_value.get("data") if isinstance(resume_value.get("data"), dict) else {}
     if action_id == "inspection.create_plan":
-        plan_guid = _first_non_empty(data, "planGuid", "plan_guid", "id", "planId")
+        action_result_code = _first_non_empty(data, "actionCode", "action_code")
+        if action_result_code != "createPlan":
+            return {
+                "status": "failed",
+                "message": "巡检计划创建结果需要通过 actionResult 回传。",
+                "error_code": "ACTION_RESULT_REQUIRED",
+                "data": {
+                    "pendingAction": pending_payload,
+                    "frontendResult": data,
+                    "final": False,
+                    "nextUserAction": "请在前端完成计划创建后回传 actionResult。",
+                },
+            }
+        plan_id = _first_non_empty(data, "planId", "id", "planGuid", "plan_guid")
+        if plan_id is None:
+            return {
+                "status": "failed",
+                "message": "计划创建成功回执中缺少计划 ID。",
+                "error_code": "PLAN_ID_REQUIRED",
+                "data": {
+                    "pendingAction": pending_payload,
+                    "frontendResult": data,
+                    "final": False,
+                },
+            }
         message = data.get("message") or resume_value.get("content") or (
-            f"巡检计划已创建成功：{plan_guid}" if plan_guid else "巡检计划已创建成功。"
+            f"巡检计划已创建成功：{plan_id}"
         )
         return {
             "status": "success",
@@ -87,9 +111,14 @@ def inspection_frontend_callback_resume_projection(
             "data": {
                 "pendingAction": pending_payload,
                 "frontendResult": data,
-                "createdPlanGuid": plan_guid,
-                "final": True,
-                "nextUserAction": "仅在用户明确发起创建工单时继续。",
+                "createdPlanId": plan_id,
+                "final": False,
+                "businessContinuation": data.get("businessContinuation") or {
+                    "businessId": "inspection",
+                    "operation": "create_work_orders_from_plan",
+                    "planId": plan_id,
+                },
+                "nextUserAction": "立即按计划 ID 查询真实计划详情，并按机场覆盖情况拆分巡检工单。",
             },
         }
 
@@ -128,6 +157,7 @@ def inspection_frontend_callback_resume_projection(
             "createdWorkOrderId": _first_non_empty(data, "workOrderId", "id"),
             "completedWorkOrderGroup": completed_group,
             "final": False,
+            "businessContinuation": data.get("businessContinuation"),
             "nextUserAction": "请先校验该工单已真实入库，再决定是否创建下一组工单。",
         },
     }

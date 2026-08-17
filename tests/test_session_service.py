@@ -25,6 +25,15 @@ class StreamingAgent:
         return type("Snapshot", (), {"values": {}})()
 
 
+class RuntimeMetadataStreamingAgent:
+    async def astream(self, payload: dict[str, Any], **kwargs: Any):
+        continuation = get_runtime_context().metadata.get("business_continuation")
+        yield {"messages": [AIMessage(content=json.dumps(continuation))]}
+
+    async def aget_state(self, config: dict[str, Any]) -> Any:
+        return type("Snapshot", (), {"values": {}})()
+
+
 class DuplicateToolCallStreamingAgent:
     async def astream(self, payload: dict[str, Any], **kwargs: Any):
         event = {
@@ -226,6 +235,29 @@ def test_stream_message_does_not_emit_lifecycle_start_or_end() -> None:
     assert len(events) == 1
     assert events[0]["type"] == "message"
     assert events[0]["content"] == "done"
+
+
+def test_stream_message_exposes_request_metadata_to_runtime_tools() -> None:
+    service = SessionService(agent=RuntimeMetadataStreamingAgent())
+    continuation = {
+        "businessId": "inspection",
+        "operation": "create_work_orders_from_plan",
+        "planId": "plan-1",
+    }
+
+    async def collect() -> list[dict[str, Any]]:
+        return [
+            event
+            async for event in service.stream_message(
+                "session-1",
+                "continue",
+                {"business_continuation": continuation},
+            )
+        ]
+
+    events = asyncio.run(collect())
+
+    assert json.loads(events[0]["content"]) == continuation
 
 
 def test_stream_message_emits_progress_before_agent_finishes() -> None:

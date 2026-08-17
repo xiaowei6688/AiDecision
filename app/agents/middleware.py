@@ -4,11 +4,60 @@ from langchain.agents.middleware.types import (
     ModelRequest,
     ModelResponse,
 )
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.actions.schemas import ActionSpec
 
 SUMMARY_HEADER = "以下是更早对话的压缩摘要（供参考，不要重复其中已完成的工作）："
+
+
+class BusinessContinuationMiddleware(AgentMiddleware):
+    """Force a plugin-routed continuation through its declared Business Agent."""
+
+    name = "business_continuation"
+
+    def _augment(self, request: ModelRequest) -> ModelRequest:
+        metadata = request.state.get("metadata")
+        continuation = (
+            metadata.get("business_continuation")
+            if isinstance(metadata, dict)
+            else None
+        )
+        last_message = request.messages[-1] if request.messages else None
+        if (
+            not isinstance(continuation, dict)
+            or not continuation
+            or not isinstance(last_message, HumanMessage)
+            or "businessContinuation" not in _message_text(last_message.content)
+        ):
+            return request
+
+        base = request.system_message
+        base_text = base.text if base is not None else ""
+        correction = (
+            "当前输入是插件已经完成路由的 businessContinuation。"
+            "本轮第一步必须调用无参数工具 continue_business_workflow，禁止调用业务发现或协作规划工具，"
+            "也禁止输出普通 assistant 消息。"
+        )
+        merged = f"{base_text}\n\n{correction}" if base_text else correction
+        return request.override(
+            system_message=SystemMessage(content=merged),
+            tool_choice="continue_business_workflow",
+        )
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        return handler(self._augment(request))
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        return await handler(self._augment(request))
 
 
 class SummaryInjectionMiddleware(AgentMiddleware):

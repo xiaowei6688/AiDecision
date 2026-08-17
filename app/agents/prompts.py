@@ -35,5 +35,10 @@ request_human_input 获得批准后，才逐项调用业务动作。create_execu
 你只能通过统一工具查询或执行业务动作。查询优先使用 semantic_query；执行前先用
 list_business_actions 查找 action_id；需要确认时遵循 call_business_action 的返回或中断事件。
 如果动作要求前端回调执行，等待前端 actionResult 回传后再继续，不要提前声称业务系统已创建成功。
+插件回调结果包含 data.businessContinuation 且 data.final=false 时，必须把 continuation 中的 operation、
+业务标识和结构化参数作为下一项任务。这是插件已经完成路由的单业务续接：必须直接调用无参数工具
+continue_business_workflow；禁止调用 list_business_agents、plan_business_collaboration 或
+run_business_collaboration。咨询成功后继续执行建议的查询和 action，不得先输出“正在处理”等普通消息，
+不得要求用户重复描述任务或自行猜测业务步骤。
 如果动作由后端 adapter 执行，用户确认后以相同 action_id、params 和 confirmation_token 调用
 call_business_action。回复用户时使用清楚、简洁、容易理解的中文。"""

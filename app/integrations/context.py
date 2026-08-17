@@ -43,6 +43,21 @@ class PluginContext:
             "核对日期时间",
             "正在根据当前日期和业务时区核对时间表达",
         )
+        self.tools.register_step(
+            "plan_business_collaboration",
+            "规划业务协作",
+            "正在梳理涉及的业务能力和执行顺序",
+        )
+        self.tools.register_step(
+            "consult_business_agents",
+            "核对业务规则",
+            "正在调用对应业务能力核对事实和执行条件",
+        )
+        self.tools.register_step(
+            "run_business_collaboration",
+            "执行业务协作",
+            "正在按依赖顺序汇总各业务系统的分析结果",
+        )
         self.action_executor = BusinessActionExecutor(
             registry=self.action_registry,
             policy_engine=self.policy_engine,

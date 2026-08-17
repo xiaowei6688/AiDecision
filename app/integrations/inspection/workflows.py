@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -15,7 +16,10 @@ from app.integrations.inspection.models import (
 )
 from app.adapters.text_to_sql import TextToSqlClient
 from app.core.config import get_settings
-from app.integrations.inspection.auth import InspectionAuthError, get_inspection_auth_client
+from app.integrations.inspection.allcore_auth import (
+    InspectionAllCoreAuthError,
+    get_inspection_allcore_auth_client,
+)
 from app.integrations.inspection.config import get_inspection_settings
 from app.tools.datetime_tool import resolve_datetime_expression
 
@@ -178,25 +182,31 @@ def inspection_query_plan_detail(plan_id: str) -> dict[str, Any]:
     endpoint = settings.plan_detail_url
     if not endpoint:
         return _error("config_error", "未配置 INSPECTION_PLAN_DETAIL_URL")
-    try:
-        headers = get_inspection_auth_client().headers_sync()
-    except InspectionAuthError as exc:
-        return _error("config_error", f"获取 inspection AllCore token 失败，无法查询计划详情：{exc}")
+    auth_client = get_inspection_allcore_auth_client()
     try:
         import httpx
 
-        response = httpx.post(
-            endpoint,
-            json={"id": normalized},
-            headers=headers,
-            timeout=settings.api_timeout_seconds,
+        response = auth_client.request_with_retry_sync(
+            lambda headers: httpx.post(
+                endpoint,
+                json={"id": normalized},
+                headers=headers,
+                timeout=settings.api_timeout_seconds,
+            )
         )
         response.raise_for_status()
         payload = response.json()
+    except InspectionAllCoreAuthError as exc:
+        error_code = "auth_error" if auth_client.is_configured() else "config_error"
+        return _error(error_code, str(exc))
     except (httpx.HTTPError, ValueError) as exc:
         return _error("upstream_error", f"巡检计划详情查询失败：{exc}")
     plan = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(plan, dict):
+    if (
+        not isinstance(payload, dict)
+        or str(payload.get("code")) != "200"
+        or not isinstance(plan, dict)
+    ):
         return _error("invalid_upstream_response", "巡检计划详情响应无效")
     return {"ok": True, "planId": normalized, "plan": plan}
 
@@ -216,23 +226,24 @@ def inspection_query_coverage(
         return _error("missing_input", "线路名称和计划 GUID 至少提供一个")
     settings = get_settings()
     inspection_settings = get_inspection_settings()
-    result = TextToSqlClient(
+    client = TextToSqlClient(
         settings.text_to_sql_base_url,
         settings.text_to_sql_timeout_seconds,
-    ).query(
-        datasource=inspection_settings.text_to_sql_datasource,
-        question=(
-            f"查询计划 plan_guid='{guid}' 下所有杆塔、航迹和机场覆盖情况"
-            if guid
-            else f"查询线路名称为'{line}'的杆塔、航迹和机场覆盖情况"
-        ),
     )
+    if guid:
+        result = _query_plan_coverage_rows(
+            client,
+            inspection_settings.text_to_sql_datasource,
+            guid,
+        )
+    else:
+        result = client.query(
+            datasource=inspection_settings.text_to_sql_datasource,
+            question=f"查询线路名称为'{line}'的杆塔、航迹和机场覆盖情况",
+        )
     if result.get("status") != "success":
         return result
-    raw = result.get("data")
-    rows = raw.get("rows", []) if isinstance(raw, dict) else []
-    if not isinstance(rows, list):
-        rows = []
+    rows = _rows_from_text2sql_result(result)
     covered = [row for row in rows if isinstance(row, dict) and _has_coverage(row)]
     uncovered = [row for row in rows if isinstance(row, dict) and not _has_coverage(row)]
     return {
@@ -245,6 +256,145 @@ def inspection_query_coverage(
         "coveredCount": len(covered),
         "uncoveredCount": len(uncovered),
     }
+
+
+def _query_plan_coverage_rows(
+    client: TextToSqlClient,
+    datasource: str,
+    plan_guid: str,
+) -> dict[str, Any]:
+    tower_result = client.query(
+        datasource=datasource,
+        question=(
+            f"查询计划 plan_guid={plan_guid} 下所有杆塔的杆塔guid、杆塔名称、线路guid、线路名称、"
+            "专业、作业性质、经度、纬度、海拔、电压等级、电压等级中文、杆塔性质和杆塔排序号"
+        ),
+    )
+    if tower_result.get("status") != "success":
+        return tower_result
+    towers = _rows_from_text2sql_result(tower_result)
+    if not towers:
+        return _error("empty_plan_towers", f"计划 {plan_guid} 下未查询到杆塔数据")
+
+    device_guids = [
+        str(_first_present(row, "device_guid", "deviceGuid", "tower_guid", "tower_uid"))
+        for row in towers
+        if _first_present(row, "device_guid", "deviceGuid", "tower_guid", "tower_uid")
+    ]
+    route_result = client.query(
+        datasource=datasource,
+        question=(
+            f"查询杆塔 device_guid 在 [{ '、'.join(device_guids) }] 中的所有航迹信息，"
+            "包含航迹guid、杆塔guid、线路guid、航迹文件、航迹版本和航迹内容"
+        ),
+    )
+    if route_result.get("status") != "success":
+        return route_result
+    airport_result = client.query(
+        datasource=datasource,
+        question="查询所有机场/机巢的机场guid、机场名称、经度、纬度和巡检半径",
+    )
+    if airport_result.get("status") != "success":
+        return airport_result
+
+    routes_by_device: dict[str, list[dict[str, Any]]] = {}
+    for row in _rows_from_text2sql_result(route_result):
+        device_guid = _first_present(row, "device_guid", "deviceGuid", "tower_guid", "tower_uid")
+        if device_guid:
+            routes_by_device.setdefault(str(device_guid), []).append(_map_route(row))
+    airports = _rows_from_text2sql_result(airport_result)
+    rows = [
+        _merge_tower_coverage(row, routes_by_device, airports, index)
+        for index, row in enumerate(towers, start=1)
+    ]
+    return {"status": "success", "data": {"rows": rows}}
+
+
+def _merge_tower_coverage(
+    tower: dict[str, Any],
+    routes_by_device: dict[str, list[dict[str, Any]]],
+    airports: list[dict[str, Any]],
+    index: int,
+) -> dict[str, Any]:
+    device_guid = _first_present(tower, "device_guid", "deviceGuid", "tower_guid", "tower_uid")
+    longitude = _as_float(_first_present(tower, "longitude", "lng"))
+    latitude = _as_float(_first_present(tower, "latitude", "lat"))
+    airport = _nearest_airport(longitude, latitude, airports)
+    routes = routes_by_device.get(str(device_guid), [])
+    first_route = routes[0] if routes else {}
+    return {
+        **tower,
+        "deviceGuid": device_guid,
+        "deviceName": _first_present(tower, "device_name", "deviceName", "basic_tower_ledger_name", "tower_name"),
+        "parentDeviceGuid": _first_present(tower, "parent_device_guid", "parentDeviceGuid", "line_guid", "line_uid"),
+        "parentDeviceName": _first_present(tower, "parent_device_name", "parentDeviceName", "basic_line_ledger_name", "line_name"),
+        "major": _first_present(tower, "major", "专业") or "tms",
+        "workNature": _first_present(tower, "work_nature", "workNature"),
+        "towerSort": _first_present(tower, "tower_sort", "towerSort") or index,
+        "longitude": longitude,
+        "latitude": latitude,
+        "dockGuid": _first_present(airport or {}, "dock_guid", "dockGuid", "airport_guid", "airportGuid"),
+        "dockName": _first_present(airport or {}, "dock_name", "dockName", "airport_name", "airportName"),
+        "deviceRouteList": routes,
+        **first_route,
+    }
+
+
+def _map_route(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "routeGuid": _first_present(row, "route_guid", "routeGuid"),
+        "parentDeviceGuid": _first_present(row, "parent_device_guid", "parentDeviceGuid"),
+        "deviceGuid": _first_present(row, "device_guid", "deviceGuid"),
+        "routeDescription": _first_present(row, "route_description", "routeDescription"),
+        "fileGuid": _first_present(row, "file_guid", "fileGuid"),
+        "fileType": _first_present(row, "file_type", "fileType"),
+        "trackVersion": _first_present(row, "track_version", "trackVersion"),
+        "routeContent": _first_present(row, "route_content", "routeContent"),
+    }
+
+
+def _nearest_airport(
+    longitude: float | None,
+    latitude: float | None,
+    airports: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if longitude is None or latitude is None:
+        return None
+    nearest: dict[str, Any] | None = None
+    nearest_distance = float("inf")
+    for airport in airports:
+        airport_longitude = _as_float(_first_present(airport, "longitude", "lng"))
+        airport_latitude = _as_float(_first_present(airport, "latitude", "lat"))
+        if airport_longitude is None or airport_latitude is None:
+            continue
+        radius = _as_float(_first_present(airport, "inspection_radius", "inspectionRadius")) or 3000.0
+        distance = _haversine(longitude, latitude, airport_longitude, airport_latitude)
+        if distance <= radius and distance < nearest_distance:
+            nearest = airport
+            nearest_distance = distance
+    return nearest
+
+
+def _haversine(longitude1: float, latitude1: float, longitude2: float, latitude2: float) -> float:
+    radius = 6_371_000.0
+    latitude1_radians = math.radians(latitude1)
+    latitude2_radians = math.radians(latitude2)
+    latitude_delta = math.radians(latitude2 - latitude1)
+    longitude_delta = math.radians(longitude2 - longitude1)
+    value = (
+        math.sin(latitude_delta / 2) ** 2
+        + math.cos(latitude1_radians)
+        * math.cos(latitude2_radians)
+        * math.sin(longitude_delta / 2) ** 2
+    )
+    return radius * 2 * math.atan2(math.sqrt(value), math.sqrt(1 - value))
+
+
+def _as_float(value: Any) -> float | None:
+    try:
+        return float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 @tool
@@ -264,28 +414,32 @@ def inspection_query_work_order_resources() -> dict[str, Any]:
             "config_error",
             "未配置巡检无人机或飞手查询地址",
         )
-    try:
-        headers = get_inspection_auth_client().headers_sync()
-    except InspectionAuthError as exc:
-        return _error("config_error", f"获取 inspection AllCore token 失败：{exc}")
+    auth_client = get_inspection_allcore_auth_client()
     try:
         import httpx
 
-        drone_response = httpx.get(
-            drone_url,
-            headers=headers,
-            timeout=settings.api_timeout_seconds,
+        drone_response = auth_client.request_with_retry_sync(
+            lambda headers: httpx.get(
+                drone_url,
+                headers=headers,
+                timeout=settings.api_timeout_seconds,
+            )
         )
         drone_response.raise_for_status()
-        worker_response = httpx.post(
-            worker_url,
-            json={"deviceType": ""},
-            headers=headers,
-            timeout=settings.api_timeout_seconds,
+        worker_response = auth_client.request_with_retry_sync(
+            lambda headers: httpx.post(
+                worker_url,
+                json={"deviceType": ""},
+                headers=headers,
+                timeout=settings.api_timeout_seconds,
+            )
         )
         worker_response.raise_for_status()
         drones = [item for item in _find_rows(drone_response.json()) if isinstance(item, dict)]
         workers = [item for item in _find_rows(worker_response.json()) if isinstance(item, dict)]
+    except InspectionAllCoreAuthError as exc:
+        error_code = "auth_error" if auth_client.is_configured() else "config_error"
+        return _error(error_code, str(exc))
     except (httpx.HTTPError, ValueError) as exc:
         return _error("upstream_error", f"巡检资源查询失败：{exc}")
 
@@ -527,6 +681,14 @@ def _first_row_value(rows: list[dict[str, Any]], *keys: str) -> Any:
             value = row.get(key)
             if value not in (None, ""):
                 return value
+    return None
+
+
+def _first_present(value: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        candidate = value.get(key)
+        if candidate not in (None, ""):
+            return candidate
     return None
 
 

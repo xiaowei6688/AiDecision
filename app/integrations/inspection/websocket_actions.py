@@ -18,7 +18,7 @@ def inspection_action_result_to_resume(
     action_code = _action_code(client_event, action_result)
     if action_code in PLAN_ACTION_CODES:
         normalized_code = "createPlan"
-        result_id_name = "planGuid"
+        result_id_name = "planId"
     elif action_code in WORK_ORDER_ACTION_CODES:
         normalized_code = "createTempOrder"
         result_id_name = "workOrderId"
@@ -44,6 +44,16 @@ def inspection_action_result_to_resume(
     }
     if result_id not in (None, ""):
         data[result_id_name] = str(result_id)
+    if success and result_id not in (None, ""):
+        data["businessContinuation"] = {
+            "businessId": "inspection",
+            "operation": (
+                "create_work_orders_from_plan"
+                if normalized_code == "createPlan"
+                else "verify_work_order_and_continue"
+            ),
+            result_id_name: str(result_id),
+        }
     return HumanResumeRequest(
         action="approve" if success else "reject",
         content=str(message) if message not in (None, "") else None,
@@ -74,8 +84,8 @@ def _result_id(value: Any, field_name: str) -> Any:
     if not isinstance(value, dict):
         return value
     aliases = (
-        ("planGuid", "planId", "id")
-        if field_name == "planGuid"
+        ("planId", "id", "planGuid")
+        if field_name == "planId"
         else ("workOrderId", "orderId", "id")
     )
     return next((value.get(key) for key in aliases if value.get(key) not in (None, "")), None)

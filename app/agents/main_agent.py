@@ -5,7 +5,11 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from app.agents.llm import build_chat_model
 from deepagents import create_deep_agent
 
-from app.agents.middleware import ConfirmationProtocolMiddleware, SummaryInjectionMiddleware
+from app.agents.middleware import (
+    BusinessContinuationMiddleware,
+    ConfirmationProtocolMiddleware,
+    SummaryInjectionMiddleware,
+)
 from app.agents.state import DecisionDSTState
 from app.agents.roles.bootstrap import build_role_subagents
 from app.agents.prompts import DECISION_AGENT_PROMPT
@@ -29,6 +33,7 @@ def build_main_agent(
         subagents=build_role_subagents(chat_model),
         middleware=[
             SummaryInjectionMiddleware(),
+            BusinessContinuationMiddleware(),
             ConfirmationProtocolMiddleware(plugin_context.action_registry.list()),
         ],
         state_schema=DecisionDSTState,

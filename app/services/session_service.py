@@ -51,7 +51,7 @@ class SessionService:
                 **(metadata or {}),
             },
         }
-        token = set_runtime_context(self._runtime_context(session_id))
+        token = set_runtime_context(self._runtime_context(session_id, metadata))
         try:
             return await self._agent.ainvoke(payload, config=self._config(session_id))
         finally:
@@ -84,7 +84,7 @@ class SessionService:
                 **(metadata or {}),
             },
         }
-        token = set_runtime_context(self._runtime_context(session_id))
+        token = set_runtime_context(self._runtime_context(session_id, metadata))
         progress_channel = ProgressChannel()
         progress_token = set_progress_channel(progress_channel)
         seen_thinking_steps: set[tuple[str | None, str | None, str | None, str | None]] = set()
@@ -509,17 +509,25 @@ class SessionService:
         finally:
             reset_runtime_context(token)
 
-    def _runtime_context(self, session_id: str) -> RequestRuntimeContext:
+    def _runtime_context(
+        self,
+        session_id: str,
+        request_metadata: dict[str, Any] | None = None,
+    ) -> RequestRuntimeContext:
         if self._runtime_context_provider is not None:
             context = self._runtime_context_provider(session_id)
             return RequestRuntimeContext(
                 user_id=context.user_id,
                 user_roles=context.user_roles,
                 session_id=session_id,
-                metadata=context.metadata,
+                metadata={**context.metadata, **(request_metadata or {})},
                 plugin_context=self._plugin_context,
             )
-        return RequestRuntimeContext(session_id=session_id, plugin_context=self._plugin_context)
+        return RequestRuntimeContext(
+            session_id=session_id,
+            metadata=request_metadata or {},
+            plugin_context=self._plugin_context,
+        )
 
     async def get_state(self, session_id: str) -> SessionStateResponse:
         """返回最新的DST状态的紧凑可序列化视图."""

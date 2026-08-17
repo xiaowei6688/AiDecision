@@ -3,13 +3,14 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.agents.middleware import (
     SUMMARY_HEADER,
+    BusinessContinuationMiddleware,
     ConfirmationProtocolMiddleware,
     SummaryInjectionMiddleware,
 )
 from app.integrations.inspection.actions import CREATE_PLAN
 
 
-def _make_request(state, system_text="基础系统提示"):
+def _make_request(state, system_text="基础系统提示", message="你好"):
     from langchain.agents.middleware.types import ModelRequest
 
     class _Model:
@@ -17,7 +18,7 @@ def _make_request(state, system_text="基础系统提示"):
 
     return ModelRequest(
         model=_Model(),
-        messages=[HumanMessage(content="你好")],
+        messages=[HumanMessage(content=message)],
         system_message=SystemMessage(content=system_text) if system_text else None,
         state=state,
     )
@@ -92,6 +93,57 @@ def test_async_wrap_injects_summary() -> None:
 
     assert result == "ok"
     assert "异步历史" in captured["request"].system_message.text
+
+
+def test_business_continuation_forces_direct_business_agent_consultation() -> None:
+    middleware = BusinessContinuationMiddleware()
+    captured: dict = {}
+    continuation = {
+        "businessId": "inspection",
+        "operation": "create_work_orders_from_plan",
+        "planId": "plan-1",
+    }
+
+    def handler(request):
+        captured["request"] = request
+        return "ok"
+
+    result = middleware.wrap_model_call(
+        _make_request(
+            {"metadata": {"business_continuation": continuation}},
+            message=f"businessContinuation: {continuation}",
+        ),
+        handler,
+    )
+
+    assert result == "ok"
+    assert captured["request"].tool_choice == "continue_business_workflow"
+    assert "禁止调用业务发现或协作规划工具" in (
+        captured["request"].system_message.text
+    )
+
+
+def test_business_continuation_does_not_affect_normal_user_message() -> None:
+    middleware = BusinessContinuationMiddleware()
+    captured: dict = {}
+
+    def handler(request):
+        captured["request"] = request
+        return "ok"
+
+    middleware.wrap_model_call(
+        _make_request({
+            "metadata": {
+                "business_continuation": {
+                    "businessId": "inspection",
+                    "operation": "create_work_orders_from_plan",
+                }
+            }
+        }),
+        handler,
+    )
+
+    assert captured["request"].tool_choice is None
 
 
 def test_confirmation_protocol_retries_registered_action_confirmation() -> None:

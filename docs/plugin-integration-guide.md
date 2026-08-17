@@ -404,6 +404,21 @@ context.action_results.register(
 ```
 
 普通 `resume` 是框架通用能力，插件只处理自己的业务字段和回调语义。
+如果回执成功后还要继续执行后续业务，handler 可以在 resume 的 `data` 中声明：
+
+```json
+{
+  "businessContinuation": {
+    "businessId": "inventory",
+    "operation": "verify_record_and_continue",
+    "recordId": "record-1"
+  }
+}
+```
+
+WebSocket 会先完成当前中断，再把该结构作为确定性的新任务调度对应业务 Agent；不会把
+恢复阶段的中间兜底消息发送给前端。该任务已经完成单业务路由，主 Agent 会直接咨询
+`businessId` 指定的 Agent，不再创建多 Agent 协作图。具体字段和 operation 语义仍由插件负责。
 
 ## 9. 插件认证和配置
 
@@ -434,6 +449,24 @@ AUTH_ENABLED=true
 TEXT_TO_SQL_BASE_URL=http://127.0.0.1:8088/ask
 ENABLED_INTEGRATIONS=["inventory"]
 ```
+
+需要在应用启动时预取并周期续期的 Token、临时凭证或远程配置，可以复用
+`app.services.refresh_lifecycle.RefreshLifecycle`。插件提供一个实现以下协议的资源对象：
+
+```python
+class InventoryCredential:
+    name = "Inventory token"
+
+    def is_configured(self) -> bool: ...
+    def background_refresh_enabled(self) -> bool: ...
+    def refresh_interval_seconds(self) -> int: ...
+    async def prefetch(self) -> object: ...
+    async def refresh(self) -> object: ...
+```
+
+然后在插件 Bundle 中持有 `RefreshLifecycle(InventoryCredential())`，并从 Bundle 的
+`startup()`、`shutdown()` 转发调用。通用生命周期只负责启动、定时和关闭；登录地址、
+账号、请求参数、Token 解析及认证头仍全部留在插件内部。
 
 ## 10. 启用插件
 

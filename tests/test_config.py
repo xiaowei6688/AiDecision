@@ -17,14 +17,19 @@ def test_framework_settings_do_not_expose_inspection_config() -> None:
     assert not hasattr(settings, "inspection_plan_detail_url")
     assert not hasattr(settings, "inspection_api_base_url")
     assert not hasattr(settings, "inspection_auth_token")
+    assert not hasattr(settings, "inspection_allcore_auth_token")
+    assert not hasattr(settings, "inspection_allcore_auth_login_url")
 
 
 def test_inspection_settings_are_integration_owned() -> None:
     settings = InspectionSettings(
         _env_file=None,
         plan_detail_url="http://inspection.local/plan/detail",
-        auth_token="token",
+        text_to_sql_datasource="inspection_mysql",
+        allcore_auth_token="inspection-token",
     )
 
     assert settings.plan_detail_url == "http://inspection.local/plan/detail"
-    assert settings.auth_token == "token"
+    assert settings.text_to_sql_datasource == "inspection_mysql"
+    assert settings.allcore_auth_token == "inspection-token"
+    assert not hasattr(settings, "auth_token")

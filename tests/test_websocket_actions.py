@@ -64,8 +64,13 @@ def test_inspection_create_plan_accepts_legacy_nested_action_result() -> None:
     assert request.action == "approve"
     assert request.content == "操作成功"
     assert request.data["actionCode"] == "createPlan"
-    assert request.data["planGuid"] == "357520855904816740"
+    assert request.data["planId"] == "357520855904816740"
     assert request.data["businessResult"]["code"] == 200
+    assert request.data["businessContinuation"] == {
+        "businessId": "inspection",
+        "operation": "create_work_orders_from_plan",
+        "planId": "357520855904816740",
+    }
 
 
 def test_inspection_work_order_extracts_id_from_legacy_nested_action_result() -> None:
@@ -88,6 +93,9 @@ def test_inspection_work_order_extracts_id_from_legacy_nested_action_result() ->
     assert request is not None
     assert request.action == "approve"
     assert request.data["workOrderId"] == "order-1"
+    assert request.data["businessContinuation"]["operation"] == (
+        "verify_work_order_and_continue"
+    )
 
 
 def test_inspection_action_result_does_not_treat_false_string_as_success() -> None:

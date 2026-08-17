@@ -20,7 +20,7 @@ CREATE_PLAN = ActionSpec(
         "planObjectList 必须来自 inspection_query_device_data 返回的真实 planObjectList，"
         "planType、planName 和完整参数必须来自 inspection_build_plan_fill_state 的 executePayload，"
         "不得由模型自行根据线路名或杆塔名编造 deviceGuid/parentDeviceGuid。"
-        "计划创建成功后只应结束计划流程，不应自动进入工单创建。"
+        "真实 createPlan actionResult 返回计划 ID 后，由巡检插件继续校验计划并拆分工单。"
     ),
     system="inspection",
     inputs=[

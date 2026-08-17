@@ -270,6 +270,52 @@ def test_chat_websocket_filters_dst_state_resume_event() -> None:
     assert pong["request_id"] == "after-resume"
 
 
+def test_chat_websocket_runs_plugin_continuation_after_action_result() -> None:
+    app = create_app(
+        settings=Settings(
+            _env_file=None,
+            auth_enabled=False,
+            enabled_integrations=["inspection"],
+        ),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/chat/demo") as websocket:
+            websocket.receive_json()
+            websocket.send_json({
+                "content": "",
+                "role": "human",
+                "type": "actionResult",
+                "request_id": "request-1",
+                "message_id": "message-1",
+                "action_result": {
+                    "action_code": "createPlan",
+                    "content": None,
+                    "data": {
+                        "code": 200,
+                        "success": True,
+                        "data": "357520855904816740",
+                        "msg": "操作成功",
+                    },
+                },
+                "session_id": "demo",
+            })
+
+            event = websocket.receive_json()
+
+    continuation = event["data"]["metadata"]["business_continuation"]
+    assert event["type"] == "message"
+    assert event["request_id"] == "request-1"
+    assert event["parent_message_id"] == "message-1"
+    assert continuation == {
+        "businessId": "inspection",
+        "operation": "create_work_orders_from_plan",
+        "planId": "357520855904816740",
+    }
+    assert "请说明" not in event["content"]
+
+
 def test_single_connection_routes_to_the_client_selected_session() -> None:
     app = create_app(
         settings=Settings(_env_file=None, auth_enabled=False),

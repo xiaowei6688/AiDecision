@@ -1,5 +1,8 @@
-import pytest
 import asyncio
+import json
+
+from langchain_core.messages import AIMessage
+import pytest
 
 from app.tools.base_tool import (
     call_business_action,
@@ -242,6 +245,7 @@ def test_dynamic_tools_include_business_agent_consultation() -> None:
     names = {getattr(item, "name", "") for item in tools}
 
     assert "consult_business_agents" in names
+    assert "continue_business_workflow" in names
     assert "create_execution_plan" in names
     assert "list_business_agents" in names
     assert "plan_business_collaboration" in names
@@ -254,6 +258,50 @@ def test_dynamic_tools_include_business_agent_consultation() -> None:
     assert "inspection_query_work_order_resources" in names
     assert "inspection_build_plan_fill_state" in names
     assert "inspection_build_work_order_fill_state" in names
+
+
+@pytest.mark.asyncio
+async def test_business_continuation_routes_directly_from_runtime_metadata() -> None:
+    class ContinuationModel:
+        def bind_tools(self, tools: list[object]) -> "ContinuationModel":
+            return self
+
+        async def ainvoke(self, messages: list[object]) -> AIMessage:
+            return AIMessage(content=json.dumps({
+                "facts_and_constraints": ["已收到计划创建成功回执"],
+                "assumptions": [],
+                "recommended_queries": [],
+                "recommended_actions": [],
+                "dependencies": [],
+                "risks": [],
+                "missing_information": [],
+            }, ensure_ascii=False))
+
+    context = PluginContext()
+    IntegrationManager(["inspection"]).register_context(context)
+    continuation = {
+        "businessId": "inspection",
+        "operation": "create_work_orders_from_plan",
+        "planId": "plan-1",
+    }
+    continuation_tool = next(
+        item
+        for item in build_agent_tools(ContinuationModel(), plugin_context=context)
+        if item.name == "continue_business_workflow"
+    )
+    token = set_runtime_context(RequestRuntimeContext(
+        session_id="session-1",
+        metadata={"business_continuation": continuation},
+        plugin_context=context,
+    ))
+    try:
+        result = await continuation_tool.ainvoke({})
+    finally:
+        reset_runtime_context(token)
+
+    assert result["status"] == "success"
+    assert result["business_id"] == "inspection"
+    assert result["advice"]["facts_and_constraints"] == ["已收到计划创建成功回执"]
 
 
 def test_update_task_progress_returns_generic_progress_command() -> None:
@@ -335,8 +383,8 @@ async def test_frontend_callback_action_interrupts_until_frontend_result(monkeyp
             "content": "前端已创建巡检计划",
             "data": {
                 "success": True,
-                "id": "plan-1",
-                "planGuid": "plan-1",
+                "actionCode": "createPlan",
+                "planId": "plan-1",
             },
         }
 
@@ -360,7 +408,7 @@ async def test_frontend_callback_action_interrupts_until_frontend_result(monkeyp
     assert interrupts[0]["payload"]["executeApi"] == "/plan/create"
     assert result["status"] == "success"
     assert result["message"] == "前端已创建巡检计划"
-    assert result["data"]["frontendResult"]["planGuid"] == "plan-1"
-    assert result["data"]["createdPlanGuid"] == "plan-1"
-    assert result["data"]["final"] is True
-    assert "明确发起创建工单" in result["data"]["nextUserAction"]
+    assert result["data"]["frontendResult"]["planId"] == "plan-1"
+    assert result["data"]["createdPlanId"] == "plan-1"
+    assert result["data"]["final"] is False
+    assert result["data"]["businessContinuation"]["planId"] == "plan-1"

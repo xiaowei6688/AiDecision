@@ -112,20 +112,16 @@ class InventoryBundle:
 事件格式或 `actionResult` 语义不同，在插件中注册 projection/handler；不要把这些字段
 条件判断加到通用 `SessionService` 或 `WebSocket` 中。
 
-## 业务系统 token
+## 业务系统认证
 
-如果某个 integration 需要访问自己的上游系统，比如 inspection：
-
-- 配置放在该 integration 自己的目录，例如 `app/integrations/inspection/.env`
-- 模板见 `app/integrations/inspection/.env.example`
-- 语义查询的 datasource 也应按 integration 配置，例如 inspection 默认使用 `INSPECTION_TEXT_TO_SQL_DATASOURCE=inspection_mysql`
-- `INSPECTION_AUTH_TOKEN`：静态上游 token
-- 或 `INSPECTION_AUTH_LOGIN_URL` + 用户名/密码 + basic auth + tenant id：由系统登录获取
-
-获取到的 token 只用于该业务系统上游请求，不是前端用户 token。
-框架根 `.env` 只放通用运行时配置，不放单个 Agent 的业务系统地址或认证参数。
-
-inspection integration 会在启动时尝试预取一次 AllCore token；如果配置齐全且不是静态 token 模式，会启动后台续期任务。业务工具调用上游接口时也会被动获取或刷新 token，例如 `inspection_query_plan_detail` 会带 `allcore-auth`、`Authorization`、`Tenant-Id` 请求旧系统计划详情接口。
+某个 integration 如果需要访问带认证的上游系统，应在自己的插件目录中定义认证配置，
+不要写入框架根 `.env`。inspection 的 AllCore 认证配置只放在
+`app/integrations/inspection/.env`，与框架面向用户的 Token 验证相互独立。可配置静态
+`INSPECTION_ALLCORE_AUTH_TOKEN`，也可配置登录地址、账号、密码、Basic Auth 和 Tenant ID
+动态获取 Token。动态 Token 会在插件启动时预取、到期前刷新，并在业务接口返回 401/403
+时强制刷新后重试一次。启动预取和周期刷新由框架通用 `RefreshLifecycle` 提供；插件只实现
+自己的登录请求、Token 格式和认证头。配置完整的动态登录参数时，启动预取优先获取新 Token；
+只希望使用静态 Token 时，不配置动态登录参数即可。
 
 ## Inspection actionResult 回执
 
@@ -149,7 +145,8 @@ inspection integration 会在启动时尝试预取一次 AllCore token；如果�
 ```
 
 `createPlan` 的 `data.data` 是计划 ID，`createTempOrder` 的 `data.data` 是工单 ID。
-inspection 插件会将该结构转换为框架通用的 resume 请求。计划成功回执只结束计划流程；
-用户后续明确提出创建工单时，工单 Agent 才使用该计划 ID 查询详情并开始工单流程。
+inspection 插件会将该结构转换为框架通用的 resume 请求，并声明 `businessContinuation`。
+工单 Agent 随即使用该计划 ID 查询真实计划详情、
+取得真实 planGuid 并开始覆盖拆分；普通 `resume` 不会冒充业务系统创建成功。
 工单成功回执会先按工单 ID 校验入库结果，再把当前 covered/uncovered 组标记完成并决定
 是否生成下一组工单。

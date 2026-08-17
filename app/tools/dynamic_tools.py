@@ -14,6 +14,7 @@ from app.agents.business_agents import (
 from app.agents.business_runtime import BusinessAgentInvocation, build_business_agent_runtime
 from app.tools.base_tool import AGENT_TOOLS
 from app.integrations.context import PluginContext
+from app.core.runtime_context import get_runtime_context
 
 
 def build_agent_tools(
@@ -27,9 +28,57 @@ def build_agent_tools(
     available = {tool.name: tool for tool in AGENT_TOOLS}
     available["plan_business_collaboration"] = _build_plan_business_collaboration_tool(plugin_context)
     available["consult_business_agents"] = _build_consult_business_agents_tool(model, plugin_context)
+    available["continue_business_workflow"] = _build_continue_business_workflow_tool(
+        model, plugin_context
+    )
     available["run_business_collaboration"] = _build_run_business_collaboration_tool(model, plugin_context)
     available.update({item.name: item for item in plugin_context.tools.values()})
     return list(available.values())
+
+
+def _build_continue_business_workflow_tool(
+    model: BaseChatModel,
+    plugin_context: PluginContext,
+) -> Any:
+    @tool
+    async def continue_business_workflow() -> dict[str, Any]:
+        """执行插件已完成路由的单业务 continuation。"""
+
+        metadata = get_runtime_context().metadata
+        continuation = metadata.get("business_continuation")
+        if not isinstance(continuation, dict):
+            return {
+                "status": "failed",
+                "error_code": "BUSINESS_CONTINUATION_MISSING",
+                "message": "当前请求不包含业务续接任务。",
+            }
+        business_id = str(continuation.get("businessId") or "").strip()
+        operation = str(continuation.get("operation") or "").strip()
+        if not business_id or not operation:
+            return {
+                "status": "failed",
+                "error_code": "INVALID_BUSINESS_CONTINUATION",
+                "message": "业务续接任务缺少 businessId 或 operation。",
+            }
+        try:
+            agent = plugin_context.business_agent_registry.get(business_id)
+        except KeyError as exc:
+            return {
+                "status": "failed",
+                "error_code": "UNKNOWN_BUSINESS_AGENT",
+                "message": str(exc),
+            }
+        return await _consult_business_agent(
+            model,
+            agent,
+            operation,
+            continuation,
+            plugin_context.action_registry,
+            plugin_context.tools,
+            plugin_context.tool_broker,
+        )
+
+    return continue_business_workflow
 
 
 def _build_plan_business_collaboration_tool(plugin_context: PluginContext) -> Any:
@@ -229,6 +278,22 @@ async def _consult_business_agent(
             "message": "业务 Agent 建议了未授权的数据源或动作。",
             "invalid_datasources": sorted(invalid_sources),
             "invalid_action_ids": sorted(invalid_actions),
+        }
+    failed_tools = [
+        record
+        for record in run_result.tool_audit
+        if record.status not in {"success", "completed"}
+    ]
+    if failed_tools:
+        failed = failed_tools[0]
+        evidence = failed.evidence if isinstance(failed.evidence, dict) else {}
+        return {
+            "business_id": agent.business_id,
+            "title": agent.title,
+            "status": "failed",
+            "error_code": "BUSINESS_TOOL_FAILED",
+            "message": evidence.get("error") or failed.summary or "业务事实核对失败。",
+            "tool_audit": [record.model_dump() for record in run_result.tool_audit],
         }
     return {
         "business_id": agent.business_id,

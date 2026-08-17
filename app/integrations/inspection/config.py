@@ -26,26 +26,18 @@ class InspectionSettings(BaseSettings):
     drone_list_url: str | None = None
     flight_worker_list_url: str | None = None
     text_to_sql_datasource: str = "inspection_mysql"
-    auth_token: str | None = Field(
-        default=None,
-        description="Static AllCore bearer token for the inspection system.",
-    )
-    auth_login_url: str | None = Field(
-        default=None,
-        description="AllCore OAuth token endpoint for the inspection system.",
-    )
-    auth_username: str | None = None
-    auth_password: str | None = None
-    auth_grant_type: str = "password"
-    auth_type: str = "account"
-    auth_scope: str = "all"
-    basic_auth: str | None = Field(
-        default=None,
-        description="Optional upstream Basic authorization value.",
-    )
-    tenant_id: str | None = None
-    token_ttl_seconds: int = Field(default=7200, gt=0)
-    token_refresh_before_seconds: int = Field(default=300, ge=0)
+    allcore_auth_token: str | None = None
+    allcore_auth_login_url: str | None = None
+    allcore_auth_username: str | None = None
+    allcore_auth_password: str | None = None
+    allcore_auth_grant_type: str = "password"
+    allcore_auth_type: str = "account"
+    allcore_auth_scope: str = "all"
+    allcore_basic_auth: str | None = None
+    allcore_tenant_id: str | None = None
+    allcore_token_ttl_seconds: int = Field(default=7200, gt=0)
+    allcore_token_refresh_before_seconds: int = Field(default=300, ge=0)
+    allcore_verify_tls: bool = False
 
 
 @lru_cache

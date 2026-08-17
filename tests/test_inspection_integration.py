@@ -7,6 +7,7 @@ import pytest
 from app.actions.policy import PolicyEngine
 from app.actions.schemas import ActionExecutionContext
 from app.integrations.inspection.actions import CREATE_PLAN, CREATE_WORK_ORDER
+from app.integrations.inspection.allcore_auth import InspectionAllCoreAuthClient
 from app.integrations.inspection.notifications import (
     InspectionNotificationRequest,
     build_notification_event,
@@ -14,7 +15,6 @@ from app.integrations.inspection.notifications import (
 from app.integrations.inspection.checks import valid_time_window
 from app.integrations.inspection.models import CreateInspectionPlanInput, CreateInspectionWorkOrderInput
 from app.integrations.inspection.adapter import InspectionAdapter
-from app.integrations.inspection.auth import InspectionAuthClient
 from app.integrations.inspection.config import InspectionSettings
 from app.integrations.inspection.ui import (
     inspection_action_result_projection,
@@ -389,16 +389,18 @@ def test_inspection_plan_frontend_callback_finishes_plan_flow_only() -> None:
             "content": "计划已创建",
             "data": {
                 "success": True,
-                "planGuid": "plan-1",
+                "actionCode": "createPlan",
+                "planId": "plan-1",
             },
         },
     )
 
     assert projected["status"] == "success"
     assert projected["message"] == "计划已创建"
-    assert projected["data"]["createdPlanGuid"] == "plan-1"
-    assert projected["data"]["final"] is True
-    assert "明确发起创建工单" in projected["data"]["nextUserAction"]
+    assert projected["data"]["createdPlanId"] == "plan-1"
+    assert projected["data"]["final"] is False
+    assert projected["data"]["businessContinuation"]["planId"] == "plan-1"
+    assert "拆分巡检工单" in projected["data"]["nextUserAction"]
 
 
 def test_legacy_create_plan_action_result_finishes_with_created_plan_id() -> None:
@@ -430,8 +432,26 @@ def test_legacy_create_plan_action_result_finishes_with_created_plan_id() -> Non
 
     assert projected["status"] == "success"
     assert projected["message"] == "操作成功"
-    assert projected["data"]["createdPlanGuid"] == "357520855904816740"
-    assert projected["data"]["final"] is True
+    assert projected["data"]["createdPlanId"] == "357520855904816740"
+    assert projected["data"]["final"] is False
+    assert projected["data"]["businessContinuation"] == {
+        "businessId": "inspection",
+        "operation": "create_work_orders_from_plan",
+        "planId": "357520855904816740",
+    }
+
+
+def test_inspection_plan_plain_resume_does_not_fake_action_result() -> None:
+    projected = inspection_frontend_callback_resume_projection(
+        {
+            "action_id": "inspection.create_plan",
+            "actionCode": "createPlan",
+        },
+        {"action": "approve", "content": "确认", "data": {}},
+    )
+
+    assert projected["status"] == "failed"
+    assert projected["error_code"] == "ACTION_RESULT_REQUIRED"
 
 
 def test_inspection_work_order_frontend_callback_requires_action_result() -> None:
@@ -480,58 +500,13 @@ def test_inspection_work_order_action_result_requires_post_create_verification()
     assert "校验" in projected["data"]["nextUserAction"]
 
 
-def test_inspection_auth_client_fetches_and_caches_login_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[dict[str, object]] = []
-
-    class Response:
-        text = '{"access_token":"login-token"}'
-
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict[str, str]:
-            return {"access_token": "login-token"}
-
-    def post(url: str, **kwargs: object) -> Response:
-        calls.append({"url": url, **kwargs})
-        return Response()
-
-    monkeypatch.setattr("httpx.post", post)
-    settings = InspectionSettings(
-        _env_file=None,
-        auth_login_url="http://inspection.local/oauth/token",
-        auth_username="user",
-        auth_password="password",
-        basic_auth="basic-secret",
-        tenant_id="tenant-1",
-    )
-    client = InspectionAuthClient(settings)
-
-    headers = client.headers_sync()
-    cached_headers = client.headers_sync()
-
-    assert headers["allcore-auth"] == "bearer login-token"
-    assert headers["Authorization"] == "Basic basic-secret"
-    assert headers["Tenant-Id"] == "tenant-1"
-    assert cached_headers["allcore-auth"] == "bearer login-token"
-    assert len(calls) == 1
-    assert calls[0]["url"] == "http://inspection.local/oauth/token"
-    assert calls[0]["params"] == {
-        "tenantId": "tenant-1",
-        "username": "user",
-        "password": "password",
-        "grant_type": "password",
-        "type": "account",
-        "scope": "all",
-    }
-
-
 def test_inspection_queries_drone_and_worker_resources_from_plugin_endpoints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Response:
         def __init__(self, payload: dict[str, object]) -> None:
             self._payload = payload
+            self.status_code = 200
 
         def raise_for_status(self) -> None:
             return None
@@ -539,28 +514,32 @@ def test_inspection_queries_drone_and_worker_resources_from_plugin_endpoints(
         def json(self) -> dict[str, object]:
             return self._payload
 
-    calls: list[tuple[str, str, object]] = []
+    calls: list[tuple[str, str, object, object]] = []
 
     def get(url: str, **kwargs: object) -> Response:
-        calls.append(("GET", url, kwargs.get("json")))
+        calls.append(("GET", url, kwargs.get("json"), kwargs.get("headers")))
         return Response({"data": {"records": [{"equipSn": "drone-1"}]}})
 
     def post(url: str, **kwargs: object) -> Response:
-        calls.append(("POST", url, kwargs.get("json")))
+        calls.append(("POST", url, kwargs.get("json"), kwargs.get("headers")))
         return Response({"data": {"records": [{"id": "worker-1"}]}})
 
     monkeypatch.setattr(
         "app.integrations.inspection.workflows.get_inspection_settings",
-        lambda: SimpleNamespace(
+        lambda: InspectionSettings(
+            _env_file=None,
             api_base_url="http://inspection.local",
             drone_list_url=None,
             flight_worker_list_url=None,
             api_timeout_seconds=30,
+            allcore_auth_token="resource-token",
         ),
     )
     monkeypatch.setattr(
-        "app.integrations.inspection.workflows.get_inspection_auth_client",
-        lambda: SimpleNamespace(headers_sync=lambda: {"Authorization": "Bearer token"}),
+        "app.integrations.inspection.workflows.get_inspection_allcore_auth_client",
+        lambda: InspectionAllCoreAuthClient(
+            InspectionSettings(_env_file=None, allcore_auth_token="resource-token")
+        ),
     )
     monkeypatch.setattr("httpx.get", get)
     monkeypatch.setattr("httpx.post", post)
@@ -571,26 +550,40 @@ def test_inspection_queries_drone_and_worker_resources_from_plugin_endpoints(
     assert result["suggestedEquipSn"] == "drone-1"
     assert result["suggestedFlightWorkers"] == ["worker-1"]
     assert calls == [
-        ("GET", "http://inspection.local/api/main-server/equip/drone/list", None),
+        (
+            "GET",
+            "http://inspection.local/api/main-server/equip/drone/list",
+            None,
+            {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "allcore-auth": "bearer resource-token",
+            },
+        ),
         (
             "POST",
             "http://inspection.local/api/main-server/person/fieldWorkInfo/getList",
             {"deviceType": ""},
+            {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "allcore-auth": "bearer resource-token",
+            },
         ),
     ]
-def test_inspection_plan_detail_uses_allcore_auth_header(monkeypatch: pytest.MonkeyPatch) -> None:
+
+
+def test_inspection_plan_detail_uses_plugin_owned_authentication(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, object]] = []
 
-    class AuthClient:
-        def headers_sync(self) -> dict[str, str]:
-            return {"allcore-auth": "bearer static-token", "Tenant-Id": "tenant-1"}
-
     class Response:
+        status_code = 200
+
         def raise_for_status(self) -> None:
             return None
 
         def json(self) -> dict[str, object]:
-            return {"data": {"planGuid": "plan-1"}}
+            return {"code": 200, "data": {"planGuid": "plan-1"}}
 
     def post(url: str, **kwargs: object) -> Response:
         calls.append({"url": url, **kwargs})
@@ -602,9 +595,15 @@ def test_inspection_plan_detail_uses_allcore_auth_header(monkeypatch: pytest.Mon
             _env_file=None,
             plan_detail_url="http://inspection.local/plan/detail",
             api_timeout_seconds=12,
+            allcore_auth_token="plan-token",
         ),
     )
-    monkeypatch.setattr("app.integrations.inspection.workflows.get_inspection_auth_client", lambda: AuthClient())
+    monkeypatch.setattr(
+        "app.integrations.inspection.workflows.get_inspection_allcore_auth_client",
+        lambda: InspectionAllCoreAuthClient(
+            InspectionSettings(_env_file=None, allcore_auth_token="plan-token")
+        ),
+    )
     monkeypatch.setattr("httpx.post", post)
 
     result = inspection_query_plan_detail.invoke({"plan_id": "plan-1"})
@@ -614,7 +613,11 @@ def test_inspection_plan_detail_uses_allcore_auth_header(monkeypatch: pytest.Mon
         {
             "url": "http://inspection.local/plan/detail",
             "json": {"id": "plan-1"},
-            "headers": {"allcore-auth": "bearer static-token", "Tenant-Id": "tenant-1"},
+            "headers": {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "allcore-auth": "bearer plan-token",
+            },
             "timeout": 12.0,
         }
     ]
@@ -653,6 +656,76 @@ def test_inspection_query_coverage_uses_integration_datasource(monkeypatch: pyte
             "question": "查询线路名称为'线路A'的杆塔、航迹和机场覆盖情况",
         }
     ]
+
+
+def test_inspection_plan_coverage_rebuilds_legacy_tower_route_airport_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    questions: list[str] = []
+
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def query(self, datasource: str, question: str) -> dict[str, object]:
+            assert datasource == "inspection_mysql"
+            questions.append(question)
+            if "计划 plan_guid" in question:
+                rows = [
+                    {
+                        "device_guid": "tower-1",
+                        "device_name": "1号杆塔",
+                        "parent_device_guid": "line-1",
+                        "parent_device_name": "10kV白路线",
+                        "major": "dms",
+                        "longitude": 120.001,
+                        "latitude": 30.001,
+                    },
+                    {
+                        "device_guid": "tower-2",
+                        "device_name": "2号杆塔",
+                        "parent_device_guid": "line-1",
+                        "parent_device_name": "10kV白路线",
+                        "major": "dms",
+                        "longitude": 121.0,
+                        "latitude": 31.0,
+                    },
+                ]
+            elif "所有航迹信息" in question:
+                rows = [{
+                    "device_guid": "tower-1",
+                    "route_guid": "route-1",
+                    "file_guid": "file-1",
+                }]
+            else:
+                rows = [{
+                    "dock_guid": "dock-1",
+                    "dock_name": "机场1",
+                    "longitude": 120.0,
+                    "latitude": 30.0,
+                    "inspection_radius": 3000,
+                }]
+            return {"status": "success", "data": {"result": {"rows": rows}}}
+
+    monkeypatch.setattr(
+        "app.integrations.inspection.workflows.get_inspection_settings",
+        lambda: InspectionSettings(
+            _env_file=None,
+            text_to_sql_datasource="inspection_mysql",
+        ),
+    )
+    monkeypatch.setattr("app.integrations.inspection.workflows.TextToSqlClient", FakeClient)
+
+    result = inspection_query_coverage.invoke({"plan_guid": "plan-guid-1"})
+
+    assert result["ok"] is True
+    assert result["coveredCount"] == 1
+    assert result["uncoveredCount"] == 1
+    assert result["coveredRows"][0]["deviceGuid"] == "tower-1"
+    assert result["coveredRows"][0]["dockGuid"] == "dock-1"
+    assert result["coveredRows"][0]["routeGuid"] == "route-1"
+    assert result["uncoveredRows"][0]["deviceGuid"] == "tower-2"
+    assert len(questions) == 3
 
 
 def test_inspection_verifies_created_work_order_with_integration_datasource(

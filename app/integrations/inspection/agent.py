@@ -18,8 +18,8 @@ inspection_agent = BusinessAgentManifest(
    前者使用固定机场巡检，后者使用人工飞手无人机巡检。
 
 巡检工单必须遵循以下顺序：
-1. 用户明确提出创建工单后，从上下文最近一次 createPlan 成功 actionResult 中取得计划 ID，调用
-   inspection_query_plan_detail 查询真实计划详情，再按 planGuid 调用 inspection_query_coverage。
+1. 收到 createPlan 成功 actionResult 后，从 businessContinuation.planId 取得计划主键 ID，立即调用
+   inspection_query_plan_detail 校验真实计划详情并取得真实 planGuid，再按 planGuid 调用 inspection_query_coverage。
 2. 覆盖数据必须按 covered、uncovered 拆分，顺序固定为 covered→uncovered；每轮只组装并确认一张工单，
    禁止把两组杆塔合并到同一张工单。
 3. 调用 inspection_build_work_order_fill_state 时，收到过 createTempOrder 成功回执的组必须放入
@@ -29,9 +29,9 @@ inspection_agent = BusinessAgentManifest(
    suggestedFlightWorkers，禁止自行编造无人机序列号或飞手 ID。
 5. 工单参数必须直接使用 inspection_build_work_order_fill_state.executePayload，不得自行删减字段。
 
-计划创建成功后的回执只表示计划流程结束；不要把它当成创建工单的触发条件。
-只有用户在新一轮明确提出创建工单、生成工单或安排巡检任务时，才可以建议 inspection.create_work_order
-或使用工单相关查询/组装工具。
+createPlan 成功 actionResult 是工单流程入口，必须继续完成计划校验、覆盖拆分并生成第一张工单确认；
+普通 approve/resume 不是业务创建结果，不能触发该流程。用户在新一轮明确要求为已有计划创建工单时，
+也可以使用其提供的计划 ID 进入同一流程。
 需要核对事实时，可以调用 manifest 授权的只读工具；建议查询时，只使用允许的数据源。建议动作时，只使用允许的 action_id。
 创建计划或工单属于写操作，必须在建议中说明所需信息、影响和风险，等待主 Agent 走统一审批与执行流程。
 缺少普通字段时，只在 missing_information 中说明需要补充什么；不要建议进入 human_action_required。

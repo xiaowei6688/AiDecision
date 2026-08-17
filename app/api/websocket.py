@@ -1,5 +1,6 @@
 """WebSocket chat endpoint."""
 
+import json
 import logging
 from uuid import uuid4
 
@@ -100,10 +101,22 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
                     await _send_error(websocket, event_session_id, "unsupported_action_result", str(exc))
                     continue
                 event = await session_service.resume_event(event_session_id, resume_request)
-                event["request_id"] = client_event.request_id
-                event["parent_message_id"] = client_event.message_id
-                event["session_id"] = event_session_id
-                await _send_event(websocket, event)
+                continuation = resume_request.data.get("businessContinuation")
+                if isinstance(continuation, dict) and continuation:
+                    async for continuation_event in session_service.stream_message(
+                        session_id=event_session_id,
+                        message=_business_continuation_message(continuation),
+                        metadata={"business_continuation": continuation},
+                    ):
+                        continuation_event["request_id"] = client_event.request_id
+                        continuation_event["parent_message_id"] = client_event.message_id
+                        continuation_event["session_id"] = event_session_id
+                        await _send_event(websocket, continuation_event)
+                else:
+                    event["request_id"] = client_event.request_id
+                    event["parent_message_id"] = client_event.message_id
+                    event["session_id"] = event_session_id
+                    await _send_event(websocket, event)
                 continue
 
             if client_event.type == ClientEventType.RESUME:
@@ -164,4 +177,14 @@ async def _send_error(
             content=message,
             data={"code": code},
         ),
+    )
+
+
+def _business_continuation_message(continuation: dict[str, object]) -> str:
+    return (
+        "继续执行插件声明的单业务流程。以下 businessContinuation 已经完成业务路由。"
+        "必须直接调用无参数工具 continue_business_workflow。禁止调用 list_business_agents、"
+        "plan_business_collaboration、run_business_collaboration，禁止先输出普通消息，"
+        "不要要求用户重复说明任务：\n"
+        + json.dumps(continuation, ensure_ascii=False, separators=(",", ":"))
     )
