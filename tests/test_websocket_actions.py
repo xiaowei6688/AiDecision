@@ -11,6 +11,7 @@ def test_action_result_to_resume_request_rejects_without_registered_handler() ->
     registry = ActionResultHandlerRegistry()
     event = WebSocketClientEvent(
         type=ClientEventType.ACTION_RESULT,
+        session_id="session-1",
         action_code="demoAction",
         action_result={"status": "success", "message": "ok", "data": {"id": 1}},
     )
@@ -24,6 +25,7 @@ def test_action_result_to_resume_request_uses_inspection_work_order_handler() ->
     registry.register(inspection_work_order_action_result_to_resume)
     event = WebSocketClientEvent(
         type=ClientEventType.ACTION_RESULT,
+        session_id="session-1",
         action_code="createTempOrder",
         action_result={"status": "success", "message": "ok", "data": {"id": 1}},
     )

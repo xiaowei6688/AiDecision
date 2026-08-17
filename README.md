@@ -155,6 +155,7 @@ Send a user message:
 ```json
 {
   "type": "message",
+  "session_id": "a71fefbd-38f4-468c-8641-c7714ddb50e0",
   "content": "帮我分析这个产品决策",
   "metadata": {
     "user_id": "demo-user"
@@ -175,6 +176,7 @@ Resume a human action over WebSocket:
 ```json
 {
   "type": "resume",
+  "session_id": "a71fefbd-38f4-468c-8641-c7714ddb50e0",
   "resume": {
     "action": "clarify",
     "content": "会议主题是 Q3 产品规划，参会人张三、李四、王五，下周三下午 3 点，时长 1 小时，需要线上会议链接。",

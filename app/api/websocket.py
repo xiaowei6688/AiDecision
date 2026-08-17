@@ -73,7 +73,7 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
                 await _send_error(websocket, session_id, "invalid_payload", str(exc))
                 continue
 
-            event_session_id = client_event.session_id or session_id
+            event_session_id = client_event.session_id
             try:
                 await access.ensure_access(event_session_id, auth)
             except PermissionError as exc:

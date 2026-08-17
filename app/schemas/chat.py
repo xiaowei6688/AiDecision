@@ -65,7 +65,7 @@ class WebSocketClientEvent(BaseModel):
     """客户端到服务器WebSocket负载."""
 
     type: ClientEventType
-    session_id: str | None = None
+    session_id: str = Field(min_length=1)
     request_id: str | None = None
     message_id: str | None = None
     content: str | None = None

@@ -65,6 +65,18 @@ uv run uvicorn app.main:app --reload
 4. Agent 需要最终确认、审批或前端执行动作时会返回 `human_action_required`
 5. `POST /sessions/{session_id}/resume` 或 WebSocket `resume` 继续执行
 
+WebSocket 的每一条客户端事件都必须在消息体携带 `session_id`，会话选择不依赖
+WebSocket URL。消息示例：
+
+```json
+{
+  "type": "message",
+  "content": "可以",
+  "session_id": "a71fefbd-38f4-468c-8641-c7714ddb50e0",
+  "metadata": {}
+}
+```
+
 不同 integration 可以注册自己的 WebSocket projection，定制 `human_action_required` 的 `data` 结构和兼容字段。inspection 的普通补字段追问不进入 `human_action_required`；只有计划或工单数据组装完成、需要旧前端确认执行时才进入确认事件。
 
 ### 接入新业务

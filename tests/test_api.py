@@ -195,12 +195,32 @@ def test_chat_websocket_returns_message_without_dst_state() -> None:
             assert ack["type"] == "ack"
             assert ack["session_id"] == "demo"
             assert ack["data"]["created"] is False
-            websocket.send_json({"type": "message", "content": "hello"})
+            websocket.send_json({
+                "type": "message",
+                "session_id": "demo",
+                "content": "hello",
+            })
 
             message = websocket.receive_json()
 
     assert message["type"] == "message"
     assert message["content"] == "echo: hello"
+
+
+def test_chat_websocket_rejects_event_without_session_id() -> None:
+    app = create_app(
+        settings=Settings(_env_file=None, auth_enabled=False),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/chat/demo") as websocket:
+            websocket.receive_json()
+            websocket.send_json({"type": "message", "content": "hello"})
+            error = websocket.receive_json()
+
+    assert error["type"] == "error"
+    assert error["data"]["code"] == "invalid_payload"
 
 
 def test_chat_websocket_without_session_id_creates_session() -> None:
@@ -230,6 +250,7 @@ def test_chat_websocket_filters_dst_state_resume_event() -> None:
             websocket.send_json(
                 {
                     "type": "resume",
+                    "session_id": "demo",
                     "resume": {
                         "action": "clarify",
                         "content": "会议主题是 Q3 产品规划",
@@ -238,7 +259,11 @@ def test_chat_websocket_filters_dst_state_resume_event() -> None:
                 }
             )
 
-            websocket.send_json({"type": "ping", "request_id": "after-resume"})
+            websocket.send_json({
+                "type": "ping",
+                "session_id": "demo",
+                "request_id": "after-resume",
+            })
             pong = websocket.receive_json()
 
     assert pong["type"] == "pong"
