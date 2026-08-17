@@ -4,6 +4,7 @@ from collections.abc import Callable
 import hashlib
 import json
 from typing import Any
+from uuid import UUID, uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
@@ -90,6 +91,7 @@ class SessionService:
         lifecycle_statuses: set[tuple[str, str]] = set()
         active_thinking_steps: dict[str, dict[str, Any]] = {}
         pending_tool_steps: dict[str, dict[str, Any]] = {}
+        public_step_ids: dict[str, str] = {}
         agent_events: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
 
         async def produce_agent_events() -> None:
@@ -136,6 +138,10 @@ class SessionService:
                         )
                     )
                     for normalized in normalized_events:
+                        normalized = self._public_progress_ids(
+                            normalized,
+                            public_step_ids,
+                        )
                         for lifecycle_event in self._thinking_lifecycle_events(
                             normalized,
                             lifecycle_statuses,
@@ -164,6 +170,10 @@ class SessionService:
                 if progress_event is None:
                     break
                 normalized = self._progress_event(session_id, progress_event)
+                normalized = self._public_progress_ids(
+                    normalized,
+                    public_step_ids,
+                )
                 for lifecycle_event in self._thinking_lifecycle_events(
                     normalized,
                     lifecycle_statuses,
@@ -206,6 +216,57 @@ class SessionService:
                 "phase": "middle",
             },
         }
+
+    def _public_progress_ids(
+        self,
+        event: dict[str, Any],
+        public_ids: dict[str, str],
+    ) -> dict[str, Any]:
+        if event.get("type") != ServerEventType.THINKING_STEP.value:
+            return event
+        data = event.get("data")
+        if not isinstance(data, dict):
+            return event
+
+        normalized = dict(data)
+        normalized["step_id"] = self._public_step_id(data.get("step_id"), public_ids)
+        steps = data.get("steps")
+        if isinstance(steps, list):
+            normalized["steps"] = [
+                {
+                    **step,
+                    "id": self._public_step_id(step.get("id"), public_ids),
+                }
+                if isinstance(step, dict)
+                else step
+                for step in steps
+            ]
+        for key in ("currentStep", "failedStep", "nextStep"):
+            if data.get(key) is not None:
+                normalized[key] = self._public_step_id(data.get(key), public_ids)
+        completed_steps = data.get("completedSteps")
+        if isinstance(completed_steps, list):
+            normalized["completedSteps"] = [
+                self._public_step_id(step_id, public_ids)
+                for step_id in completed_steps
+            ]
+        return {**event, "data": normalized}
+
+    def _public_step_id(
+        self,
+        internal_id: Any,
+        public_ids: dict[str, str],
+    ) -> str:
+        key = str(internal_id or "").strip() or "anonymous-step"
+        current = public_ids.get(key)
+        if current is not None:
+            return current
+        try:
+            public_id = str(UUID(key))
+        except ValueError:
+            public_id = str(uuid4())
+        public_ids[key] = public_id
+        return public_id
 
     def _stream_events(
         self,

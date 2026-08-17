@@ -347,7 +347,7 @@ evidence
 
 ### 实时步骤生命周期
 
-框架保证每个可展示步骤都按稳定的 `step_id` 输出生命周期：
+框架保证每个可展示步骤都按稳定的标准 UUID `step_id` 输出生命周期：
 
 ```text
 running -> completed
@@ -355,7 +355,9 @@ running -> failed
 ```
 
 即使 Agent 快照第一次出现某步骤时已经是 `completed`，框架也会先补发同一
-`step_id` 的 `running`。在最终 `message`、`human_action_required` 或流结束前，
+`step_id` 的 `running`。插件或模型提供的 `query_devices`、`step-1`、工具 call id
+等仅作为内部关联键，输出前会统一映射为 UUID；嵌套的 `steps/currentStep/completedSteps`
+等关联字段使用同一映射。在最终 `message`、`human_action_required` 或流结束前，
 仍处于 `running` 的步骤会自动收口；前端应按 `step_id` 更新同一条步骤记录。
 
 插件只需为工具注册用户友好的标题和摘要：

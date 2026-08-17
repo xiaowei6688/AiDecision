@@ -1,6 +1,7 @@
 from typing import Any
 import asyncio
 import json
+from uuid import UUID
 
 from langchain_core.messages import AIMessage, ToolMessage
 
@@ -259,8 +260,11 @@ def test_completed_progress_backfills_running_with_the_same_step_id() -> None:
         "running",
         "completed",
     ]
-    assert events[0]["data"]["step_id"] == "assemble-plan"
-    assert events[1]["data"]["step_id"] == "assemble-plan"
+    step_id = events[0]["data"]["step_id"]
+    UUID(step_id)
+    assert events[1]["data"]["step_id"] == step_id
+    assert events[1]["data"]["currentStep"] == step_id
+    assert events[1]["data"]["steps"][0]["id"] == step_id
 
 
 def test_active_progress_is_completed_before_human_action_required() -> None:
@@ -285,17 +289,21 @@ def test_sequential_steps_complete_before_the_next_step_starts() -> None:
     events = asyncio.run(_collect_stream(service))
     thinking = [event for event in events if event["type"] == "thinking_step"]
 
-    assert [
-        (event["data"]["step_id"], event["data"]["status"])
-        for event in thinking
-    ] == [
-        ("query", "running"),
-        ("query", "completed"),
-        ("assemble", "running"),
-        ("assemble", "completed"),
-        ("confirm", "running"),
-        ("confirm", "completed"),
+    assert [event["data"]["status"] for event in thinking] == [
+        "running",
+        "completed",
+        "running",
+        "completed",
+        "running",
+        "completed",
     ]
+    step_ids = [event["data"]["step_id"] for event in thinking]
+    for step_id in step_ids:
+        UUID(step_id)
+    assert step_ids[0] == step_ids[1]
+    assert step_ids[2] == step_ids[3]
+    assert step_ids[4] == step_ids[5]
+    assert len({step_ids[0], step_ids[2], step_ids[4]}) == 3
     assert events[-1]["type"] == "message"
 
 
@@ -309,7 +317,7 @@ def test_nested_tool_does_not_prematurely_complete_parent_task_step() -> None:
         "running",
         "running",
     ]
-    assert thinking[0]["data"]["step_id"] == "query-task"
+    UUID(thinking[0]["data"]["step_id"])
     assert thinking[1]["data"]["summary_data"]["source"] == "tool_call"
     assert [event["data"]["status"] for event in thinking[2:]] == [
         "completed",
@@ -345,8 +353,8 @@ def test_internal_progress_tool_is_hidden_and_business_tool_completes_immediatel
         "running",
         "completed",
     ]
-    assert thinking[0]["data"]["step_id"] == "framework.tool.coverage-call"
-    assert thinking[1]["data"]["step_id"] == "framework.tool.coverage-call"
+    UUID(thinking[0]["data"]["step_id"])
+    assert thinking[1]["data"]["step_id"] == thinking[0]["data"]["step_id"]
     assert all("Update task progress" not in str(event) for event in events)
     assert [event["type"] for event in events] == [
         "thinking_step",
