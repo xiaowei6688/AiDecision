@@ -1,6 +1,7 @@
 import json
 
 from app.integrations.inspection.workflows import inspection_build_work_order_fill_state
+from app.integrations.inspection.direct_results import inspection_work_order_direct_action
 
 
 def test_inspection_work_order_workflow_preserves_legacy_fill_state() -> None:
@@ -26,6 +27,10 @@ def test_inspection_work_order_workflow_preserves_legacy_fill_state() -> None:
     assert state["routePath"] == "/workOrder/review"
     assert state["executePayload"]["inspectionMethod"] == "dock"
     assert state["pendingWorkOrderGroups"] == ["covered"]
+    direct = inspection_work_order_direct_action(result)
+    assert direct is not None
+    assert direct.action_id == "inspection.create_work_order"
+    assert direct.params == state["executePayload"]
 
 
 def test_inspection_work_order_accepts_stringified_model_arguments() -> None:

@@ -10,6 +10,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from app.agents.business_agents import BusinessAdvice, BusinessAgentManifest, parse_business_advice
 from app.tools.broker import ToolAuditRecord, ToolBroker, ToolBrokerRequest
+from app.integrations.direct_results import DirectActionResult
 
 
 @dataclass(frozen=True)
@@ -20,12 +21,14 @@ class BusinessAgentInvocation:
     available_actions: list[dict[str, Any]]
     available_tools: tuple[Any, ...] = ()
     tool_broker: ToolBroker | None = None
+    allow_direct_results: bool = False
 
 
 @dataclass(frozen=True)
 class BusinessAgentRunResult:
-    advice: BusinessAdvice
+    advice: BusinessAdvice | None = None
     tool_audit: tuple[ToolAuditRecord, ...] = ()
+    direct_result: DirectActionResult | None = None
 
 
 class BusinessAgentRuntime(Protocol):
@@ -103,6 +106,11 @@ class LocalLLMBusinessAgent:
                     manifest.readonly_tool_names,
                 )
                 audit.append(broker_result.audit)
+                if invocation.allow_direct_results and broker_result.direct_result is not None:
+                    return BusinessAgentRunResult(
+                        tool_audit=tuple(audit),
+                        direct_result=broker_result.direct_result,
+                    )
                 messages.append(ToolMessage(
                     content=json.dumps(
                         broker_result.result,

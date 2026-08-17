@@ -475,6 +475,29 @@ def test_normalize_event_converts_confirmation_tool_result_to_human_action_requi
     assert normalized["data"]["confirmation_token"] == "token-1"
 
 
+def test_direct_action_failure_is_forwarded_without_internal_marker() -> None:
+    service = SessionService(agent=None)
+    event = {
+        "messages": [ToolMessage(
+            content=json.dumps({
+                "status": "failed",
+                "action_id": "inventory.create_record",
+                "message": "业务规则校验未通过。",
+                "error_code": "POLICY_REJECTED",
+                "_framework": {"return_direct": True},
+            }),
+            tool_call_id="direct-action-1",
+        )]
+    }
+
+    normalized = service._normalize_event("session-1", event)
+
+    assert normalized["type"] == "error"
+    assert normalized["content"] == "业务规则校验未通过。"
+    assert normalized["data"]["error_code"] == "POLICY_REJECTED"
+    assert "_framework" not in normalized["data"]
+
+
 def test_normalize_event_converts_task_progress_tool_result_to_thinking_step() -> None:
     service = SessionService(agent=None)
     tool_result = {

@@ -10,6 +10,7 @@ from uuid import uuid4
 from app.core.progress import get_progress_channel
 from app.core.runtime_context import get_runtime_context
 from app.integrations.tools import IntegrationToolRegistry
+from app.integrations.direct_results import DirectActionResult
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class ToolAuditRecord:
 class ToolBrokerResult:
     result: Any
     audit: ToolAuditRecord
+    direct_result: DirectActionResult | None = None
 
 
 class ToolBroker:
@@ -94,6 +96,11 @@ class ToolBroker:
                 "error_code": "READONLY_TOOL_ERROR",
                 "message": str(exc),
             }
+        direct_result = (
+            self._registry.project_direct_result(request.tool_name, result)
+            if status == "success"
+            else None
+        )
         audit = ToolAuditRecord(
             request_id=request_id,
             session_id=runtime.session_id,
@@ -123,4 +130,8 @@ class ToolBroker:
                     "source": "tool_broker",
                 },
             )
-        return ToolBrokerResult(result=result, audit=audit)
+        return ToolBrokerResult(
+            result=result,
+            audit=audit,
+            direct_result=direct_result,
+        )

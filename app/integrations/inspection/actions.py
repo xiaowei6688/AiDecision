@@ -58,7 +58,7 @@ CREATE_WORK_ORDER = ActionSpec(
     input_model=CreateInspectionWorkOrderInput,
     executor=ActionExecutorSpec(adapter="inspection", method="create_work_order"),
     intent_examples=["创建巡检工单", "安排无人机巡检", "生成巡检任务"],
-    pre_checks=["inspection.valid_time_window"],
+    pre_checks=[],
     confirmation=ActionConfirmation(required=True),
     risk_level="high",
     success_template="巡检工单已创建：{id}",

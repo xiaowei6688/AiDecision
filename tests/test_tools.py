@@ -26,6 +26,7 @@ from app.core.runtime_context import RequestRuntimeContext, reset_runtime_contex
 from app.core.progress import ProgressChannel, reset_progress_channel, set_progress_channel
 from app.tools.broker import ToolBrokerRequest
 from app.tools.dynamic_tools import _tool_audit_progress
+from app.integrations.direct_results import DirectActionResult
 
 
 class _FakeModel:
@@ -50,6 +51,44 @@ def test_business_agent_cannot_receive_non_readonly_tool() -> None:
 
     with pytest.raises(ValueError, match="must be read-only"):
         registry.read_only(("create_record",))
+
+
+@pytest.mark.asyncio
+async def test_tool_broker_projects_completed_result_for_direct_forwarding() -> None:
+    context = PluginContext()
+
+    from langchain_core.tools import tool
+
+    @tool
+    def build_record() -> dict[str, object]:
+        """组装记录。"""
+
+        return {"ok": True, "payload": {"name": "record-1"}}
+
+    context.tools.register(build_record, read_only=True)
+    context.tools.register_direct_result(
+        "build_record",
+        lambda result: DirectActionResult(
+            action_id="inventory.create_record",
+            params=result["payload"],
+        ),
+    )
+    token = set_runtime_context(RequestRuntimeContext(plugin_context=context))
+    try:
+        result = await context.tool_broker.execute(
+            ToolBrokerRequest(
+                business_id="inventory",
+                tool_name="build_record",
+                arguments={},
+            ),
+            ("build_record",),
+        )
+    finally:
+        reset_runtime_context(token)
+
+    assert result.direct_result is not None
+    assert result.direct_result.action_id == "inventory.create_record"
+    assert result.direct_result.params == {"name": "record-1"}
 
 
 @pytest.mark.asyncio
@@ -304,6 +343,74 @@ async def test_business_continuation_routes_directly_from_runtime_metadata() -> 
     assert result["advice"]["facts_and_constraints"] == ["已收到计划创建成功回执"]
 
 
+@pytest.mark.asyncio
+async def test_business_continuation_forwards_ready_tool_result_without_summary() -> None:
+    class DirectModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def bind_tools(self, tools: list[object]) -> "DirectModel":
+            return self
+
+        async def ainvoke(self, messages: list[object]) -> AIMessage:
+            self.calls += 1
+            if self.calls > 1:
+                raise AssertionError("ready direct result must skip business summary")
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "inspection_build_work_order_fill_state",
+                    "args": {
+                        "plan": {
+                            "planGuid": "plan-1",
+                            "planType": "5",
+                            "inspectStartTime": "2026-08-18 00:00:00",
+                            "inspectEndTime": "2026-08-18 23:59:59",
+                        },
+                        "coverage_rows": [{
+                            "deviceGuid": "tower-1",
+                            "deviceName": "10kV白路线#1",
+                            "parentDeviceGuid": "line-1",
+                            "parentDeviceName": "10kV白路线",
+                            "major": "dms",
+                            "dockGuid": "dock-1",
+                        }],
+                    },
+                    "id": "build-work-order-1",
+                    "type": "tool_call",
+                }],
+            )
+
+    model = DirectModel()
+    context = PluginContext()
+    IntegrationManager(["inspection"]).register_context(context)
+    continuation_tool = next(
+        item
+        for item in build_agent_tools(model, plugin_context=context)
+        if item.name == "continue_business_workflow"
+    )
+    token = set_runtime_context(RequestRuntimeContext(
+        session_id="session-1",
+        metadata={
+            "business_continuation": {
+                "businessId": "inspection",
+                "operation": "create_work_orders_from_plan",
+                "planId": "plan-1",
+            }
+        },
+        plugin_context=context,
+    ))
+    try:
+        result = await continuation_tool.ainvoke({})
+    finally:
+        reset_runtime_context(token)
+
+    direct = result["_framework"]["direct_action"]
+    assert model.calls == 1
+    assert direct["action_id"] == "inspection.create_work_order"
+    assert direct["params"]["orderDetailList"][0]["deviceGuid"] == "tower-1"
+
+
 def test_update_task_progress_returns_generic_progress_command() -> None:
     result = update_task_progress.invoke(
         {
@@ -399,6 +506,7 @@ async def test_frontend_callback_action_interrupts_until_frontend_result(monkeyp
         result = await call_business_action.ainvoke({
             "action_id": "inspection.create_plan",
             "params": {"planName": "临时计划"},
+            "return_direct": True,
         })
     finally:
         reset_runtime_context(token)
@@ -412,3 +520,4 @@ async def test_frontend_callback_action_interrupts_until_frontend_result(monkeyp
     assert result["data"]["createdPlanId"] == "plan-1"
     assert result["data"]["final"] is False
     assert result["data"]["businessContinuation"]["planId"] == "plan-1"
+    assert result["_framework"] == {"return_direct": True}

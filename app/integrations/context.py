@@ -58,6 +58,11 @@ class PluginContext:
             "执行业务协作",
             "正在按依赖顺序汇总各业务系统的分析结果",
         )
+        self.tools.register_step(
+            "call_business_action",
+            "准备业务确认",
+            "正在校验待执行操作并生成确认信息",
+        )
         self.action_executor = BusinessActionExecutor(
             registry=self.action_registry,
             policy_engine=self.policy_engine,

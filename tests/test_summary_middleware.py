@@ -1,10 +1,13 @@
 from langchain.agents.middleware.types import ModelResponse
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+import json
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from app.agents.middleware import (
     SUMMARY_HEADER,
     BusinessContinuationMiddleware,
     ConfirmationProtocolMiddleware,
+    DirectResultMiddleware,
     SummaryInjectionMiddleware,
 )
 from app.integrations.inspection.actions import CREATE_PLAN
@@ -22,6 +25,55 @@ def _make_request(state, system_text="基础系统提示", message="你好"):
         system_message=SystemMessage(content=system_text) if system_text else None,
         state=state,
     )
+
+
+def test_direct_result_middleware_forwards_action_without_model_call() -> None:
+    middleware = DirectResultMiddleware()
+    request = _make_request({"messages": []})
+    request = request.override(messages=[ToolMessage(
+        content=json.dumps({
+            "_framework": {
+                "direct_action": {
+                    "kind": "action",
+                    "action_id": "inventory.create_record",
+                    "params": {"name": "record-1"},
+                }
+            }
+        }),
+        tool_call_id="continue-1",
+    )])
+
+    result = middleware.wrap_model_call(
+        request,
+        lambda _: (_ for _ in ()).throw(AssertionError("model must not be called")),
+    )
+
+    call = result.result[0].tool_calls[0]
+    assert call["name"] == "call_business_action"
+    assert call["args"] == {
+        "action_id": "inventory.create_record",
+        "params": {"name": "record-1"},
+        "return_direct": True,
+    }
+
+
+def test_direct_result_middleware_finishes_without_model_summary() -> None:
+    middleware = DirectResultMiddleware()
+    request = _make_request({"messages": []}).override(messages=[ToolMessage(
+        content=json.dumps({
+            "status": "success",
+            "_framework": {"return_direct": True},
+        }),
+        tool_call_id="action-1",
+    )])
+
+    result = middleware.wrap_model_call(
+        request,
+        lambda _: (_ for _ in ()).throw(AssertionError("model must not be called")),
+    )
+
+    assert result.result[0].content == ""
+    assert result.result[0].tool_calls == []
 
 
 def test_summary_is_appended_to_system_message() -> None:

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Any
+
+from app.integrations.direct_results import DirectActionResult
 
 
 @dataclass(frozen=True)
@@ -17,6 +20,10 @@ class IntegrationToolRegistry:
         self._tools: dict[str, Any] = {}
         self._read_only: set[str] = set()
         self._steps: dict[str, ToolStepDescription] = {}
+        self._direct_result_projectors: dict[
+            str,
+            Callable[[Any], DirectActionResult | None],
+        ] = {}
 
     def register(self, value: Any, *, read_only: bool = False) -> None:
         name = getattr(value, "name", None)
@@ -35,6 +42,25 @@ class IntegrationToolRegistry:
         description = build_tool_step(tool_name, title, summary)
         if description is not None:
             self._steps[tool_name] = description
+
+    def register_direct_result(
+        self,
+        tool_name: str,
+        projector: Callable[[Any], DirectActionResult | None],
+    ) -> None:
+        if tool_name not in self._tools:
+            raise ValueError(f"unknown plugin tool: {tool_name}")
+        if tool_name in self._direct_result_projectors:
+            raise ValueError(f"direct result projector already registered: {tool_name}")
+        self._direct_result_projectors[tool_name] = projector
+
+    def project_direct_result(
+        self,
+        tool_name: str,
+        result: Any,
+    ) -> DirectActionResult | None:
+        projector = self._direct_result_projectors.get(tool_name)
+        return projector(result) if projector is not None else None
 
     def values(self) -> list[Any]:
         return list(self._tools.values())

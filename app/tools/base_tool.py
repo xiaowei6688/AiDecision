@@ -360,6 +360,7 @@ async def call_business_action(
     action_id: str,
     params: dict[str, Any],
     confirmation_token: str | None = None,
+    return_direct: bool = False,
 ) -> dict[str, Any]:
     """按统一 ActionSpec 执行业务动作，并返回标准化执行结果。"""
 
@@ -378,6 +379,8 @@ async def call_business_action(
         confirmation_token=confirmation_token,
     )
     payload = _action_result_to_dict(result)
+    if return_direct:
+        payload["_framework"] = {"return_direct": True}
     if payload.get("status") == "requires_confirmation" and payload.get("executionMode") == "frontend_callback":
         resume_value = interrupt(_frontend_callback_human_action(payload))
         return _frontend_callback_resume_result(payload, resume_value)
@@ -397,6 +400,11 @@ def _action_result_to_dict(result: ActionResult) -> dict[str, Any]:
 
 
 def _frontend_callback_human_action(payload: dict[str, Any]) -> dict[str, Any]:
+    public_payload = {
+        key: value
+        for key, value in payload.items()
+        if key != "_framework"
+    }
     return {
         "status": HumanActionStatus.PENDING,
         "question": payload.get("question") or payload.get("message") or "请确认是否继续",
@@ -404,7 +412,7 @@ def _frontend_callback_human_action(payload: dict[str, Any]) -> dict[str, Any]:
         "recommended_action": "approve",
         "ui_type": "confirmation",
         "fields": [],
-        "payload": payload,
+        "payload": public_payload,
     }
 
 
@@ -441,6 +449,11 @@ def _frontend_callback_resume_result(
             "frontendResult": data,
         },
     }
+    if (
+        isinstance(pending_payload.get("_framework"), dict)
+        and pending_payload["_framework"].get("return_direct") is True
+    ):
+        result["_framework"] = {"return_direct": True}
     projection = _plugin_context().projections.project_frontend_callback(
         pending_payload, resume_value
     )

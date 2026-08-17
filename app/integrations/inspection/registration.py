@@ -10,6 +10,9 @@ from app.integrations.inspection.actions import CREATE_PLAN, CREATE_WORK_ORDER
 from app.integrations.inspection.adapter import InspectionAdapter
 from app.integrations.inspection.agent import inspection_agent
 from app.integrations.inspection.checks import valid_time_window
+from app.integrations.inspection.direct_results import (
+    inspection_work_order_direct_action,
+)
 from app.integrations.inspection.routes import router as inspection_router
 from app.integrations.inspection.ui import (
     inspection_action_result_projection,
@@ -66,6 +69,10 @@ def register_inspection_tools(context: PluginContext) -> None:
         ("inspection_build_work_order_fill_state", "整理工单确认信息", "正在把计划、设备和巡检方式整理成待确认的工单数据"),
     ):
         context.tools.register_step(name, title, summary)
+    context.tools.register_direct_result(
+        "inspection_build_work_order_fill_state",
+        inspection_work_order_direct_action,
+    )
 
 
 def register_inspection_agent(context: PluginContext) -> None:

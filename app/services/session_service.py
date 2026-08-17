@@ -605,6 +605,22 @@ class SessionService:
                 "data": frontend_callback_requirement,
             }
 
+        direct_result = self._direct_return_result_from_event(event)
+        if direct_result is not None:
+            status = direct_result.get("status")
+            return {
+                "type": (
+                    ServerEventType.ERROR.value
+                    if status == "failed"
+                    else ServerEventType.MESSAGE.value
+                ),
+                "session_id": session_id,
+                "content": direct_result.get("message") or (
+                    "业务操作失败。" if status == "failed" else "业务操作已完成。"
+                ),
+                "data": direct_result,
+            }
+
         if isinstance(event, dict) and "__interrupt__" in event:
             interrupts = self._jsonable(event["__interrupt__"])
             projected = self._plugin_context.projections.project_human_interrupt(
@@ -742,6 +758,7 @@ class SessionService:
     def _is_hidden_thinking_tool(self, tool_name: str) -> bool:
         normalized = tool_name.replace("-", "_").lower()
         return self._is_human_input_tool(normalized) or normalized in {
+            "call_business_action",
             "update_task_progress",
             "update_dialogue_state",
             "write_todos",
@@ -781,6 +798,20 @@ class SessionService:
                 "message": candidate.get("message"),
                 "error_code": candidate.get("error_code"),
                 "data": self._jsonable(data),
+            }
+        return None
+
+    def _direct_return_result_from_event(self, event: Any) -> dict[str, Any] | None:
+        for candidate in self._candidate_dicts(event):
+            framework = candidate.get("_framework")
+            if not isinstance(framework, dict) or framework.get("return_direct") is not True:
+                continue
+            if candidate.get("status") not in {"success", "updated", "failed"}:
+                continue
+            return {
+                key: self._jsonable(value)
+                for key, value in candidate.items()
+                if key != "_framework"
             }
         return None
 

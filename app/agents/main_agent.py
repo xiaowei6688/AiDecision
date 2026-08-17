@@ -8,6 +8,7 @@ from deepagents import create_deep_agent
 from app.agents.middleware import (
     BusinessContinuationMiddleware,
     ConfirmationProtocolMiddleware,
+    DirectResultMiddleware,
     SummaryInjectionMiddleware,
 )
 from app.agents.state import DecisionDSTState
@@ -34,6 +35,7 @@ def build_main_agent(
         middleware=[
             SummaryInjectionMiddleware(),
             BusinessContinuationMiddleware(),
+            DirectResultMiddleware(),
             ConfirmationProtocolMiddleware(plugin_context.action_registry.list()),
         ],
         state_schema=DecisionDSTState,

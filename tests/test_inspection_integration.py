@@ -39,6 +39,8 @@ def test_inspection_actions_are_confirmed_writes() -> None:
     assert CREATE_PLAN.confirmation.required
     assert CREATE_WORK_ORDER.confirmation.required
     assert CREATE_WORK_ORDER.executor.adapter == "inspection"
+    assert CREATE_PLAN.pre_checks == ["inspection.valid_time_window"]
+    assert CREATE_WORK_ORDER.pre_checks == []
 
 
 def test_inspection_registers_user_friendly_tool_steps() -> None:
@@ -293,6 +295,18 @@ def test_policy_accepts_a_valid_inspection_time_window() -> None:
     result = policy.evaluate(CREATE_PLAN, {
         "inspectStartTime": "2099-08-14 08:00:00",
         "inspectEndTime": "2099-08-14 10:00:00",
+    }, ActionExecutionContext())
+
+    assert result.allowed
+
+
+def test_existing_inspection_plan_can_create_work_order_after_plan_window() -> None:
+    policy = PolicyEngine()
+    policy.register_pre_check("inspection.valid_time_window", valid_time_window)
+
+    result = policy.evaluate(CREATE_WORK_ORDER, {
+        "startDate": "2026-07-27 00:00:00",
+        "endDate": "2026-08-02 23:59:59",
     }, ActionExecutionContext())
 
     assert result.allowed

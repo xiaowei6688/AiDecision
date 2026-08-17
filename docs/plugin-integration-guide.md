@@ -328,6 +328,33 @@ BusinessAgentManifest.readonly_tool_names 包含该工具名
 未注册、未授权或非只读工具会在业务 Agent 调度阶段被拒绝。插件写操作不得注册为
 `read_only=True`，应通过 `ActionSpec + Adapter` 由主 Agent 执行。
 
+如果某个只读工具已经确定性地组装出完整写操作参数，不需要业务 Agent 或主 Agent 再总结，
+插件可以注册直出投影：
+
+```python
+from app.integrations.direct_results import DirectActionResult
+
+
+def project_ready_result(result):
+    payload = result.get("executePayload") if result.get("ok") is True else None
+    if not isinstance(payload, dict):
+        return None
+    return DirectActionResult(
+        action_id="inventory.create_purchase_order",
+        params=payload,
+    )
+
+
+context.tools.register_direct_result(
+    "inventory_build_purchase_order",
+    project_ready_result,
+)
+```
+
+直出只在插件已完成路由的单业务 continuation 中生效。框架会跳过子 Agent 和主 Agent 的
+二次总结，直接调用 `call_business_action`；参数模型、权限策略、确认 Token、Adapter、
+`human_action_required` 和动作审计仍照常执行。普通咨询和多 Agent 协作不会启用直出。
+
 `ToolBroker` 会为每次只读调用统一记录：
 
 ```text

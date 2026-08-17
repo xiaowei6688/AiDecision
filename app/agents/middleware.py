@@ -1,14 +1,73 @@
 from collections.abc import Awaitable, Callable
+import json
+from uuid import uuid4
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     ModelRequest,
     ModelResponse,
 )
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from app.actions.schemas import ActionSpec
 
 SUMMARY_HEADER = "以下是更早对话的压缩摘要（供参考，不要重复其中已完成的工作）："
+
+
+class DirectResultMiddleware(AgentMiddleware):
+    """Forward framework-declared tool results without another model call."""
+
+    name = "direct_result"
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        direct = self._response(request)
+        return direct if direct is not None else handler(request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        direct = self._response(request)
+        return direct if direct is not None else await handler(request)
+
+    def _response(self, request: ModelRequest) -> ModelResponse | None:
+        last_message = request.messages[-1] if request.messages else None
+        if not isinstance(last_message, ToolMessage):
+            return None
+        try:
+            payload = json.loads(_message_text(last_message.content))
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        framework = payload.get("_framework")
+        if not isinstance(framework, dict):
+            return None
+        direct_action = framework.get("direct_action")
+        if isinstance(direct_action, dict):
+            action_id = direct_action.get("action_id")
+            params = direct_action.get("params")
+            if isinstance(action_id, str) and action_id and isinstance(params, dict):
+                return ModelResponse(result=[AIMessage(
+                    content="",
+                    tool_calls=[{
+                        "name": "call_business_action",
+                        "args": {
+                            "action_id": action_id,
+                            "params": params,
+                            "return_direct": True,
+                        },
+                        "id": f"direct_{uuid4().hex}",
+                        "type": "tool_call",
+                    }],
+                )])
+        if framework.get("return_direct") is True:
+            return ModelResponse(result=[AIMessage(content="")])
+        return None
 
 
 class BusinessContinuationMiddleware(AgentMiddleware):

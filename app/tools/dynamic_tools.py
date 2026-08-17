@@ -76,6 +76,7 @@ def _build_continue_business_workflow_tool(
             plugin_context.action_registry,
             plugin_context.tools,
             plugin_context.tool_broker,
+            allow_direct_results=True,
         )
 
     return continue_business_workflow
@@ -236,6 +237,8 @@ async def _consult_business_agent(
     action_registry: Any,
     tool_registry: Any,
     tool_broker: Any,
+    *,
+    allow_direct_results: bool = False,
 ) -> dict[str, Any]:
     actions = [
         action.public_dict()
@@ -252,6 +255,7 @@ async def _consult_business_agent(
             available_actions=actions,
             available_tools=readonly_tools,
             tool_broker=tool_broker,
+            allow_direct_results=allow_direct_results,
         ))
     except (PermissionError, RuntimeError, ValueError) as exc:
         return {
@@ -261,7 +265,47 @@ async def _consult_business_agent(
             "error_code": "INVALID_BUSINESS_ADVICE",
             "message": str(exc),
         }
+    if run_result.direct_result is not None:
+        direct_result = run_result.direct_result
+        if not any(
+            direct_result.action_id.startswith(prefix)
+            for prefix in agent.action_prefixes
+        ):
+            return {
+                "business_id": agent.business_id,
+                "title": agent.title,
+                "status": "failed",
+                "error_code": "BUSINESS_DIRECT_RESULT_OUT_OF_SCOPE",
+                "message": "业务工具返回了未授权的直出动作。",
+            }
+        try:
+            action_registry.get(direct_result.action_id)
+        except KeyError as exc:
+            return {
+                "business_id": agent.business_id,
+                "title": agent.title,
+                "status": "failed",
+                "error_code": "BUSINESS_DIRECT_ACTION_NOT_FOUND",
+                "message": str(exc),
+            }
+        return {
+            "business_id": agent.business_id,
+            "title": agent.title,
+            "status": "success",
+            "_framework": {
+                "direct_action": direct_result.model_dump(),
+            },
+            "tool_audit": [record.model_dump() for record in run_result.tool_audit],
+        }
     advice = run_result.advice
+    if advice is None:
+        return {
+            "business_id": agent.business_id,
+            "title": agent.title,
+            "status": "failed",
+            "error_code": "EMPTY_BUSINESS_ADVICE",
+            "message": "业务 Agent 未返回建议或直出结果。",
+        }
     invalid_sources = {
         query.datasource for query in advice.recommended_queries
     } - set(agent.datasources)
