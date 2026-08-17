@@ -23,6 +23,8 @@ class InspectionSettings(BaseSettings):
     api_timeout_seconds: float = Field(default=30.0, gt=0.0)
     timezone: str = "Asia/Shanghai"
     plan_detail_url: str | None = Field(default=None)
+    drone_list_url: str | None = None
+    flight_worker_list_url: str | None = None
     text_to_sql_datasource: str = "inspection_mysql"
     auth_token: str | None = Field(
         default=None,

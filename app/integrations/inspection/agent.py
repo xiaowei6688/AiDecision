@@ -17,6 +17,18 @@ inspection_agent = BusinessAgentManifest(
 2. 巡检工单：根据已存在的巡检计划、杆塔、航迹和机场覆盖情况规划工单。被机场覆盖与未覆盖的杆塔必须分别创建工单；
    前者使用固定机场巡检，后者使用人工飞手无人机巡检。
 
+巡检工单必须遵循以下顺序：
+1. 用户明确提出创建工单后，从上下文最近一次 createPlan 成功 actionResult 中取得计划 ID，调用
+   inspection_query_plan_detail 查询真实计划详情，再按 planGuid 调用 inspection_query_coverage。
+2. 覆盖数据必须按 covered、uncovered 拆分，顺序固定为 covered→uncovered；每轮只组装并确认一张工单，
+   禁止把两组杆塔合并到同一张工单。
+3. 调用 inspection_build_work_order_fill_state 时，收到过 createTempOrder 成功回执的组必须放入
+   completed_groups；但必须先用回执中的 workOrderId 调用 inspection_query_work_order_detail，确认真实入库后
+   才能把该组标记为已完成。工具返回 COMPLETED 时结束，不再建议创建动作。
+4. uncovered 组必须先调用 inspection_query_work_order_resources，使用其 suggestedEquipSn 和
+   suggestedFlightWorkers，禁止自行编造无人机序列号或飞手 ID。
+5. 工单参数必须直接使用 inspection_build_work_order_fill_state.executePayload，不得自行删减字段。
+
 计划创建成功后的回执只表示计划流程结束；不要把它当成创建工单的触发条件。
 只有用户在新一轮明确提出创建工单、生成工单或安排巡检任务时，才可以建议 inspection.create_work_order
 或使用工单相关查询/组装工具。
@@ -28,8 +40,8 @@ inspection_agent = BusinessAgentManifest(
 用户提供任何相对日期或自然语言日期时，必须先调用 compute_datetime 核对日期；取得 planObjectList 后，
 必须调用 inspection_build_plan_fill_state，并把用户原始时间表达（例如“明天”）原样传入 time_expression。
 计划确认与建议动作参数必须直接使用其 executePayload，禁止自行计算日期、填写中文 planType 或自由编写 planName。
-字段已经齐备时，不要继续重复查询或追问普通信息，应建议主 Agent 调用 request_human_input
-向用户发起最终确认；确认通过后再进入统一动作执行或旧前端回调流程。
+字段已经齐备时，不要继续重复查询或追问普通信息，应建议对应的 inspection action；主 Agent 调用
+call_business_action 后由统一执行器产生最终确认，禁止额外建议 request_human_input。
 跨系统场景中，明确说明对设备、无人机、飞手、机场或其他系统事实的依赖。""",
     datasources=(
         "inspection_plans",
@@ -45,6 +57,8 @@ inspection_agent = BusinessAgentManifest(
         "inspection_query_device_data",
         "inspection_build_plan_fill_state",
         "inspection_query_coverage",
+        "inspection_query_work_order_detail",
+        "inspection_query_work_order_resources",
         "inspection_build_work_order_fill_state",
     ),
     cross_system_notes=(

@@ -250,6 +250,8 @@ def test_dynamic_tools_include_business_agent_consultation() -> None:
     assert "compute_datetime" in names
     assert "inspection_query_plan_detail" in names
     assert "inspection_query_coverage" in names
+    assert "inspection_query_work_order_detail" in names
+    assert "inspection_query_work_order_resources" in names
     assert "inspection_build_plan_fill_state" in names
     assert "inspection_build_work_order_fill_state" in names
 

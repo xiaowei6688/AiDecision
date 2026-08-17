@@ -126,3 +126,30 @@ class InventoryBundle:
 框架根 `.env` 只放通用运行时配置，不放单个 Agent 的业务系统地址或认证参数。
 
 inspection integration 会在启动时尝试预取一次 AllCore token；如果配置齐全且不是静态 token 模式，会启动后台续期任务。业务工具调用上游接口时也会被动获取或刷新 token，例如 `inspection_query_plan_detail` 会带 `allcore-auth`、`Authorization`、`Tenant-Id` 请求旧系统计划详情接口。
+
+## Inspection actionResult 回执
+
+旧巡检前端完成计划或工单创建后，通过 WebSocket 回传业务结果：
+
+```json
+{
+  "type": "actionResult",
+  "session_id": "5bfb9911-035b-41d1-8bea-bbee030a028b",
+  "action_result": {
+    "action_code": "createPlan",
+    "content": null,
+    "data": {
+      "code": 200,
+      "success": true,
+      "data": "357520855904816740",
+      "msg": "操作成功"
+    }
+  }
+}
+```
+
+`createPlan` 的 `data.data` 是计划 ID，`createTempOrder` 的 `data.data` 是工单 ID。
+inspection 插件会将该结构转换为框架通用的 resume 请求。计划成功回执只结束计划流程；
+用户后续明确提出创建工单时，工单 Agent 才使用该计划 ID 查询详情并开始工单流程。
+工单成功回执会先按工单 ID 校验入库结果，再把当前 covered/uncovered 组标记完成并决定
+是否生成下一组工单。

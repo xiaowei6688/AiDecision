@@ -1,4 +1,5 @@
 from datetime import datetime
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -25,7 +26,11 @@ from app.integrations.inspection.workflows import (
     inspection_query_coverage,
     inspection_query_device_data,
     inspection_query_plan_detail,
+    inspection_query_work_order_detail,
+    inspection_query_work_order_resources,
 )
+from app.integrations.inspection.websocket_actions import inspection_action_result_to_resume
+from app.schemas.chat import WebSocketClientEvent
 from app.actions.schemas import ActionResult
 from app.integrations.projections import ProjectionRegistry
 
@@ -396,6 +401,39 @@ def test_inspection_plan_frontend_callback_finishes_plan_flow_only() -> None:
     assert "明确发起创建工单" in projected["data"]["nextUserAction"]
 
 
+def test_legacy_create_plan_action_result_finishes_with_created_plan_id() -> None:
+    request = inspection_action_result_to_resume(WebSocketClientEvent.model_validate({
+        "type": "actionResult",
+        "session_id": "session-1",
+        "action_result": {
+            "action_code": "createPlan",
+            "content": None,
+            "data": {
+                "code": 200,
+                "success": True,
+                "data": "357520855904816740",
+                "msg": "操作成功",
+            },
+        },
+    }))
+    assert request is not None
+
+    projected = inspection_frontend_callback_resume_projection(
+        {
+            "status": "requires_confirmation",
+            "action_id": "inspection.create_plan",
+            "actionCode": "createPlan",
+            "executePayload": {"planName": "临时计划"},
+        },
+        request.model_dump(),
+    )
+
+    assert projected["status"] == "success"
+    assert projected["message"] == "操作成功"
+    assert projected["data"]["createdPlanGuid"] == "357520855904816740"
+    assert projected["data"]["final"] is True
+
+
 def test_inspection_work_order_frontend_callback_requires_action_result() -> None:
     projected = inspection_frontend_callback_resume_projection(
         {
@@ -414,6 +452,32 @@ def test_inspection_work_order_frontend_callback_requires_action_result() -> Non
     assert projected["status"] == "failed"
     assert projected["error_code"] == "ACTION_RESULT_REQUIRED"
     assert "actionResult" in projected["message"]
+
+
+def test_inspection_work_order_action_result_requires_post_create_verification() -> None:
+    request = inspection_action_result_to_resume(WebSocketClientEvent.model_validate({
+        "type": "actionResult",
+        "session_id": "session-1",
+        "action_result": {
+            "action_code": "createTempOrder",
+            "data": {"code": 200, "data": "order-1", "msg": "操作成功"},
+        },
+    }))
+    assert request is not None
+
+    projected = inspection_frontend_callback_resume_projection(
+        {
+            "action_id": "inspection.create_work_order",
+            "executePayload": {"inspectionMethod": "dock"},
+        },
+        request.model_dump(),
+    )
+
+    assert projected["status"] == "success"
+    assert projected["data"]["createdWorkOrderId"] == "order-1"
+    assert projected["data"]["completedWorkOrderGroup"] == "covered"
+    assert projected["data"]["final"] is False
+    assert "校验" in projected["data"]["nextUserAction"]
 
 
 def test_inspection_auth_client_fetches_and_caches_login_token(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -462,6 +526,58 @@ def test_inspection_auth_client_fetches_and_caches_login_token(monkeypatch: pyte
     }
 
 
+def test_inspection_queries_drone_and_worker_resources_from_plugin_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Response:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return self._payload
+
+    calls: list[tuple[str, str, object]] = []
+
+    def get(url: str, **kwargs: object) -> Response:
+        calls.append(("GET", url, kwargs.get("json")))
+        return Response({"data": {"records": [{"equipSn": "drone-1"}]}})
+
+    def post(url: str, **kwargs: object) -> Response:
+        calls.append(("POST", url, kwargs.get("json")))
+        return Response({"data": {"records": [{"id": "worker-1"}]}})
+
+    monkeypatch.setattr(
+        "app.integrations.inspection.workflows.get_inspection_settings",
+        lambda: SimpleNamespace(
+            api_base_url="http://inspection.local",
+            drone_list_url=None,
+            flight_worker_list_url=None,
+            api_timeout_seconds=30,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.integrations.inspection.workflows.get_inspection_auth_client",
+        lambda: SimpleNamespace(headers_sync=lambda: {"Authorization": "Bearer token"}),
+    )
+    monkeypatch.setattr("httpx.get", get)
+    monkeypatch.setattr("httpx.post", post)
+
+    result = inspection_query_work_order_resources.invoke({})
+
+    assert result["ok"] is True
+    assert result["suggestedEquipSn"] == "drone-1"
+    assert result["suggestedFlightWorkers"] == ["worker-1"]
+    assert calls == [
+        ("GET", "http://inspection.local/api/main-server/equip/drone/list", None),
+        (
+            "POST",
+            "http://inspection.local/api/main-server/person/fieldWorkInfo/getList",
+            {"deviceType": ""},
+        ),
+    ]
 def test_inspection_plan_detail_uses_allcore_auth_header(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, object]] = []
 
@@ -537,6 +653,39 @@ def test_inspection_query_coverage_uses_integration_datasource(monkeypatch: pyte
             "question": "查询线路名称为'线路A'的杆塔、航迹和机场覆盖情况",
         }
     ]
+
+
+def test_inspection_verifies_created_work_order_with_integration_datasource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, str]] = []
+
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def query(self, datasource: str, question: str) -> dict[str, object]:
+            calls.append({"datasource": datasource, "question": question})
+            return {
+                "status": "success",
+                "data": {"rows": [{"work_order_no": "WO-1", "status": "created"}]},
+            }
+
+    monkeypatch.setattr(
+        "app.integrations.inspection.workflows.get_inspection_settings",
+        lambda: InspectionSettings(
+            _env_file=None,
+            text_to_sql_datasource="inspection_mysql",
+        ),
+    )
+    monkeypatch.setattr("app.integrations.inspection.workflows.TextToSqlClient", FakeClient)
+
+    result = inspection_query_work_order_detail.invoke({"order_id": "order-1"})
+
+    assert result["ok"] is True
+    assert result["workOrder"]["work_order_no"] == "WO-1"
+    assert calls[0]["datasource"] == "inspection_mysql"
+    assert "id=order-1" in calls[0]["question"]
 
 
 def test_inspection_query_device_data_uses_legacy_question_and_maps_rows(monkeypatch: pytest.MonkeyPatch) -> None:

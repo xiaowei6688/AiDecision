@@ -203,14 +203,17 @@ def inspection_query_plan_detail(plan_id: str) -> dict[str, Any]:
 
 @tool
 def inspection_query_coverage(
-    line_name: str,
+    line_name: str | None = None,
+    plan_guid: str | None = None,
     filters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """查询线路杆塔的机场覆盖；仅在用户明确触发工单规划时用于分组。"""
 
-    line = line_name.strip()
-    if not line:
-        return _error("missing_input", "线路名称不能为空")
+    del filters
+    line = (line_name or "").strip()
+    guid = (plan_guid or "").strip()
+    if not line and not guid:
+        return _error("missing_input", "线路名称和计划 GUID 至少提供一个")
     settings = get_settings()
     inspection_settings = get_inspection_settings()
     result = TextToSqlClient(
@@ -218,7 +221,11 @@ def inspection_query_coverage(
         settings.text_to_sql_timeout_seconds,
     ).query(
         datasource=inspection_settings.text_to_sql_datasource,
-        question=f"查询线路名称为'{line}'的杆塔、航迹和机场覆盖情况",
+        question=(
+            f"查询计划 plan_guid='{guid}' 下所有杆塔、航迹和机场覆盖情况"
+            if guid
+            else f"查询线路名称为'{line}'的杆塔、航迹和机场覆盖情况"
+        ),
     )
     if result.get("status") != "success":
         return result
@@ -231,6 +238,7 @@ def inspection_query_coverage(
     return {
         "ok": True,
         "lineName": line,
+        "planGuid": guid,
         "rows": rows,
         "coveredRows": covered,
         "uncoveredRows": uncovered,
@@ -240,35 +248,157 @@ def inspection_query_coverage(
 
 
 @tool
+def inspection_query_work_order_resources() -> dict[str, Any]:
+    """查询人工飞手巡检所需的可用无人机与飞手。"""
+
+    settings = get_inspection_settings()
+    base = (settings.api_base_url or "").rstrip("/")
+    drone_url = settings.drone_list_url or (
+        f"{base}/api/main-server/equip/drone/list" if base else None
+    )
+    worker_url = settings.flight_worker_list_url or (
+        f"{base}/api/main-server/person/fieldWorkInfo/getList" if base else None
+    )
+    if not drone_url or not worker_url:
+        return _error(
+            "config_error",
+            "未配置巡检无人机或飞手查询地址",
+        )
+    try:
+        headers = get_inspection_auth_client().headers_sync()
+    except InspectionAuthError as exc:
+        return _error("config_error", f"获取 inspection AllCore token 失败：{exc}")
+    try:
+        import httpx
+
+        drone_response = httpx.get(
+            drone_url,
+            headers=headers,
+            timeout=settings.api_timeout_seconds,
+        )
+        drone_response.raise_for_status()
+        worker_response = httpx.post(
+            worker_url,
+            json={"deviceType": ""},
+            headers=headers,
+            timeout=settings.api_timeout_seconds,
+        )
+        worker_response.raise_for_status()
+        drones = [item for item in _find_rows(drone_response.json()) if isinstance(item, dict)]
+        workers = [item for item in _find_rows(worker_response.json()) if isinstance(item, dict)]
+    except (httpx.HTTPError, ValueError) as exc:
+        return _error("upstream_error", f"巡检资源查询失败：{exc}")
+
+    equip_sn = _first_row_value(drones, "equipSn", "sn", "deviceSn", "deviceCode")
+    worker_id = _first_row_value(workers, "id", "userId", "personId", "workerId")
+    return {
+        "ok": True,
+        "drones": drones,
+        "flightWorkers": workers,
+        "suggestedEquipSn": equip_sn,
+        "suggestedFlightWorkers": [str(worker_id)] if worker_id not in (None, "") else [],
+    }
+
+
+@tool
+def inspection_query_work_order_detail(order_id: str) -> dict[str, Any]:
+    """按业务系统返回的工单 ID 校验工单已真实入库。"""
+
+    normalized = order_id.strip()
+    if not normalized:
+        return _error("missing_input", "工单 ID 不能为空")
+    settings = get_settings()
+    inspection_settings = get_inspection_settings()
+    result = TextToSqlClient(
+        settings.text_to_sql_base_url,
+        settings.text_to_sql_timeout_seconds,
+    ).query(
+        datasource=inspection_settings.text_to_sql_datasource,
+        question=(
+            f"查询工单 id={normalized} 的工单编号、工单内容、工单状态、巡检方式、"
+            "专业、开始时间、结束时间和作业对象数量"
+        ),
+    )
+    if result.get("status") != "success":
+        return result
+    rows = _rows_from_text2sql_result(result)
+    if not rows:
+        return _error("work_order_not_found", f"未查询到工单 ID {normalized} 的入库记录")
+    return {
+        "ok": True,
+        "workOrderId": normalized,
+        "workOrder": rows[0],
+        "summary": f"工单 ID {normalized} 已完成入库校验。",
+    }
+
+
+@tool
 def inspection_build_work_order_fill_state(
     plan: dict[str, Any],
     coverage_rows: list[dict[str, Any]] | None = None,
+    group: str | None = None,
+    completed_groups: list[str] | None = None,
+    equip_sn: str | None = None,
+    flight_workers: list[str] | str | None = None,
 ) -> dict[str, Any]:
-    """根据计划和覆盖结果生成旧前端可消费的工单填充状态；仅在用户明确创建工单时使用。"""
+    """按机场覆盖拆分工单，每次仅组装待创建队列中的一个工单。"""
 
     rows = coverage_rows or []
-    details = [_row_to_detail(row) for row in rows]
+    grouped_rows = {
+        "covered": [row for row in rows if _has_coverage(row)],
+        "uncovered": [row for row in rows if not _has_coverage(row)],
+    }
+    all_groups = [name for name in ("covered", "uncovered") if grouped_rows[name]]
+    completed = {name for name in (completed_groups or []) if name in all_groups}
+    pending_groups = [name for name in all_groups if name not in completed]
+    selected_group = group if group in pending_groups else (pending_groups[0] if pending_groups else None)
+    if selected_group is None:
+        return {
+            "ok": True,
+            "workOrderFillState": {
+                "status": "COMPLETED",
+                "pendingWorkOrderGroups": [],
+                "executePayload": None,
+            },
+            "summary": "该计划的巡检工单已全部创建完成。",
+        }
+
+    details = [_row_to_detail(row) for row in grouped_rows[selected_group]]
     details = [detail for detail in details if detail is not None]
-    method = "dock" if any(_has_coverage(row) for row in rows) else "drone"
+    method = "dock" if selected_group == "covered" else "drone"
+    major = str(plan.get("major") or (details[0].get("major") if details else None) or "tms")
+    plan_type = str(plan.get("planType") or plan.get("plan_type") or "")
+    plan_type_code = _plan_type_code(plan_type)
+    missing_fields = []
+    if not (plan.get("planGuid") or plan.get("plan_guid")):
+        missing_fields.append("planGuid")
+    if not (plan.get("inspectStartTime") or plan.get("inspect_start_time")):
+        missing_fields.append("startDate")
+    if not (plan.get("inspectEndTime") or plan.get("inspect_end_time")):
+        missing_fields.append("endDate")
+    if method == "drone" and not equip_sn:
+        missing_fields.append("equipSn")
+    if method == "drone" and not flight_workers:
+        missing_fields.append("flightWorkers")
     payload = {
         "planGuid": plan.get("planGuid") or plan.get("plan_guid"),
-        "priority": 3,
-        "major": plan.get("major") or "tms",
-        "workNature": plan.get("workNature") or "fine_inspect_tms",
-        "isCycle": "0" if str(plan.get("planType")) == "5" else "1",
+        "priority": _work_order_priority(plan_type_code),
+        "major": major,
+        "workNature": plan.get("workNature") or plan.get("work_nature") or _work_nature(major),
+        "isCycle": "0" if plan_type_code == "5" else "1",
         "inspectionMethod": method,
-        "equipSn": None,
-        "photoStorageType": "visible,ir",
+        "equipSn": equip_sn if method == "drone" else None,
+        "photoStorageType": _photo_storage_type(major, details),
         "panoShot": False,
-        "isRecord": 1,
-        "flightWorkers": None,
-        "workContent": f"基于巡检计划自动生成工单：{plan.get('planName') or ''}"[:100],
+        "isRecord": "1",
+        "flightWorkers": flight_workers if method == "drone" else None,
+        "workContent": _work_content(plan, details, plan_type_code),
         "startDate": plan.get("inspectStartTime") or plan.get("inspect_start_time"),
         "endDate": plan.get("inspectEndTime") or plan.get("inspect_end_time"),
         "isTerrain": False,
         "orderDetailList": details,
     }
-    group = "covered" if method == "dock" else "uncovered"
+    ready = bool(details) and not missing_fields
     state = {
         "intentCode": "createTempOrder",
         "actionCode": "createTempOrder",
@@ -281,17 +411,27 @@ def inspection_build_work_order_fill_state(
             "planName": plan.get("planName"),
             "planTypeName": PLAN_TYPES.get(str(plan.get("planType")), plan.get("planTypeZh")),
             "lineName": plan.get("lineName"),
+            "workOrderGroup": selected_group,
+            "inspectionMethodName": "固定机场巡检" if method == "dock" else "人工飞手无人机巡检",
             "orderDetailCount": len(details),
         },
-        "missingFields": [],
+        "missingFields": missing_fields,
         "ambiguousFields": [],
         "invalidFields": [],
-        "executePayload": payload if details else None,
-        "status": "READY" if details else "NEED_MORE_INFO",
-        "nextQuestion": None if details else "未查询到可创建工单的杆塔数据。",
-        "pendingWorkOrderGroups": [group] if details else [],
+        "executePayload": payload if ready else None,
+        "status": "READY" if ready else "NEED_MORE_INFO",
+        "nextQuestion": (
+            None
+            if ready
+            else "未查询到可创建工单的杆塔数据。"
+            if not details
+            else "工单必要字段尚未补齐，请先核对计划详情和巡检资源。"
+        ),
+        "currentWorkOrderGroup": selected_group,
+        "pendingWorkOrderGroups": pending_groups,
+        "remainingWorkOrderGroups": [name for name in pending_groups if name != selected_group],
     }
-    return {"ok": bool(details), "workOrderFillState": state}
+    return {"ok": ready, "workOrderFillState": state}
 
 
 def _has_coverage(row: dict[str, Any]) -> bool:
@@ -308,21 +448,86 @@ def _row_to_detail(row: dict[str, Any]) -> dict[str, Any] | None:
     if not device_guid or not parent_guid:
         return None
     return {
-        "trackVersion": row.get("trackVersion") or row.get("track_version") or "",
-        "dockGuid": row.get("dockGuid") or row.get("airportGuid") or row.get("airport_uid") or "",
-        "fileGuid": row.get("fileGuid") or row.get("file_guid") or "",
-        "latitude": row.get("latitude") or row.get("lat") or "",
-        "routeGuid": row.get("routeGuid") or row.get("route_guid") or parent_guid,
-        "deviceName": row.get("deviceName") or row.get("tower_name") or row.get("towerName") or row.get("杆塔名称"),
-        "workNature": row.get("workNature") or row.get("work_nature") or "fine_inspect_tms",
-        "isMainTower": row.get("isMainTower", True),
+        "dockGuid": row.get("dockGuid") or row.get("airportGuid") or row.get("airport_uid"),
+        "dockName": row.get("dockName") or row.get("airportName") or row.get("airport_name"),
+        "dockList": row.get("dockList"),
         "parentDeviceGuid": parent_guid,
-        "major": row.get("major") or row.get("专业") or "tms",
-        "deviceGuid": device_guid,
         "parentDeviceName": row.get("parentDeviceName") or row.get("line_name") or row.get("lineName") or row.get("线路名称"),
-        "dockName": row.get("dockName") or row.get("airportName") or row.get("airport_name") or "",
-        "longitude": row.get("longitude") or row.get("lng") or "",
+        "deviceType": row.get("deviceType") or row.get("major") or row.get("专业") or "tms",
+        "deviceGuid": device_guid,
+        "deviceName": row.get("deviceName") or row.get("tower_name") or row.get("towerName") or row.get("杆塔名称"),
+        "poleNature": row.get("poleNature") or row.get("pole_nature"),
+        "towerSort": row.get("towerSort") or row.get("tower_sort") or row.get("sort"),
+        "routeGuid": row.get("routeGuid") or row.get("route_guid"),
+        "routeContent": row.get("routeContent") or row.get("route_content"),
+        "routeDescription": row.get("routeDescription") or row.get("route_description"),
+        "fileGuid": row.get("fileGuid") or row.get("file_guid"),
+        "fileType": row.get("fileType") or row.get("file_type"),
+        "deviceRouteList": row.get("deviceRouteList") or row.get("device_route_list") or [],
+        "longitude": row.get("longitude") or row.get("lng"),
+        "latitude": row.get("latitude") or row.get("lat"),
+        "altitude": row.get("altitude"),
+        "voltageLevel": row.get("voltageLevel") or row.get("voltage_level"),
+        "voltageLevelZh": row.get("voltageLevelZh") or row.get("voltage_level_zh"),
+        "promptInformation": row.get("promptInformation"),
+        "disabled": bool(row.get("disabled", False)),
+        "sort": row.get("sort") or row.get("towerSort") or row.get("tower_sort"),
+        "terrain": bool(row.get("terrain", False)),
+        "lineGuid": row.get("lineGuid") or parent_guid,
+        "workNature": row.get("workNature") or row.get("work_nature") or "fine_inspect_tms",
+        "major": row.get("major") or row.get("专业") or "tms",
     }
+
+
+def _plan_type_code(value: str) -> str:
+    normalized = value.strip()
+    if normalized in PLAN_TYPES:
+        return normalized
+    return next((code for code, name in PLAN_TYPES.items() if name == normalized), normalized)
+
+
+def _work_order_priority(plan_type: str) -> int:
+    return {"1": 4, "2": 3, "3": 3, "4": 2, "5": 1}.get(plan_type, 3)
+
+
+def _work_nature(major: str) -> str:
+    return {
+        "tms": "fine_inspect_tms",
+        "dms": "fine_inspect_dms",
+        "sms": "fine_inspect_sms",
+    }.get(major, "fine_inspect_tms")
+
+
+def _photo_storage_type(major: str, details: list[dict[str, Any]]) -> str:
+    if major != "tms":
+        return "visable"
+    for detail in details:
+        value = detail.get("voltageLevel") or detail.get("voltageLevelZh")
+        match = re.search(r"\d+", str(value or ""))
+        if match and int(match.group()) >= 500:
+            return "visable,ir"
+    return "visable"
+
+
+def _work_content(
+    plan: dict[str, Any],
+    details: list[dict[str, Any]],
+    plan_type: str,
+) -> str:
+    start = str(plan.get("inspectStartTime") or plan.get("inspect_start_time") or "")
+    lines = [str(item.get("parentDeviceName") or "").strip() for item in details]
+    line_names = "、".join(dict.fromkeys(name for name in lines if name))
+    type_name = PLAN_TYPES.get(plan_type, str(plan.get("planTypeZh") or plan_type))
+    return f"{start} {line_names} {type_name}，共{len(details)}基杆塔"[:100]
+
+
+def _first_row_value(rows: list[dict[str, Any]], *keys: str) -> Any:
+    for row in rows:
+        for key in keys:
+            value = row.get(key)
+            if value not in (None, ""):
+                return value
+    return None
 
 
 def _rows_from_text2sql_result(result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -343,9 +548,10 @@ def _find_rows(value: Any) -> list[Any]:
         return value
     if not isinstance(value, dict):
         return []
-    rows = value.get("rows")
-    if isinstance(rows, list):
-        return rows
+    for key in ("rows", "records", "list"):
+        rows = value.get(key)
+        if isinstance(rows, list):
+            return rows
     data = value.get("data")
     if data is not value:
         nested = _find_rows(data)

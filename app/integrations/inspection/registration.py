@@ -16,13 +16,15 @@ from app.integrations.inspection.ui import (
     inspection_frontend_callback_resume_projection,
     inspection_human_interrupt_projection,
 )
-from app.integrations.inspection.websocket_actions import inspection_work_order_action_result_to_resume
+from app.integrations.inspection.websocket_actions import inspection_action_result_to_resume
 from app.integrations.inspection.workflows import (
     inspection_build_plan_fill_state,
     inspection_build_work_order_fill_state,
     inspection_query_coverage,
     inspection_query_device_data,
     inspection_query_plan_detail,
+    inspection_query_work_order_detail,
+    inspection_query_work_order_resources,
 )
 from app.integrations.context import PluginContext
 
@@ -40,7 +42,7 @@ def register_inspection_projections(context: PluginContext) -> None:
     context.projections.register_frontend_callback(
         inspection_frontend_callback_resume_projection
     )
-    context.action_results.register(inspection_work_order_action_result_to_resume)
+    context.action_results.register(inspection_action_result_to_resume)
 
 
 def register_inspection_tools(context: PluginContext) -> None:
@@ -49,6 +51,8 @@ def register_inspection_tools(context: PluginContext) -> None:
         inspection_query_device_data,
         inspection_build_plan_fill_state,
         inspection_query_coverage,
+        inspection_query_work_order_detail,
+        inspection_query_work_order_resources,
         inspection_build_work_order_fill_state,
     ):
         context.tools.register(item, read_only=True)
@@ -57,6 +61,8 @@ def register_inspection_tools(context: PluginContext) -> None:
         ("inspection_query_device_data", "核对线路杆塔台账", "正在按线路和范围核对杆塔 UID、名称、专业及所属线路"),
         ("inspection_build_plan_fill_state", "整理计划确认信息", "正在整理计划类型、名称和巡检对象"),
         ("inspection_query_coverage", "分析巡检覆盖条件", "正在结合机场覆盖情况判断可用的巡检方式"),
+        ("inspection_query_work_order_detail", "核对工单创建结果", "正在根据业务回执核对工单是否真实入库"),
+        ("inspection_query_work_order_resources", "核对巡检资源", "正在核对可用无人机和飞手资源"),
         ("inspection_build_work_order_fill_state", "整理工单确认信息", "正在把计划、设备和巡检方式整理成待确认的工单数据"),
     ):
         context.tools.register_step(name, title, summary)

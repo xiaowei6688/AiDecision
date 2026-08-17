@@ -108,13 +108,27 @@ def inspection_frontend_callback_resume_projection(
         }
 
     message = data.get("message") or resume_value.get("content") or "巡检工单已创建成功。"
+    pending_execute_payload = pending_payload.get("executePayload")
+    pending_execute_payload = (
+        pending_execute_payload if isinstance(pending_execute_payload, dict) else {}
+    )
+    completed_group = (
+        "covered"
+        if pending_execute_payload.get("inspectionMethod") == "dock"
+        else "uncovered"
+        if pending_execute_payload.get("inspectionMethod") == "drone"
+        else None
+    )
     return {
         "status": "success",
         "message": message,
         "data": {
             "pendingAction": pending_payload,
             "frontendResult": data,
-            "final": True,
+            "createdWorkOrderId": _first_non_empty(data, "workOrderId", "id"),
+            "completedWorkOrderGroup": completed_group,
+            "final": False,
+            "nextUserAction": "请先校验该工单已真实入库，再决定是否创建下一组工单。",
         },
     }
 
