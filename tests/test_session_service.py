@@ -1,4 +1,5 @@
 from typing import Any
+import asyncio
 import json
 
 from langchain_core.messages import AIMessage, ToolMessage
@@ -6,6 +7,8 @@ from langchain_core.messages import AIMessage, ToolMessage
 from app.integrations.inspection.ui import inspection_human_interrupt_projection
 from app.integrations.context import PluginContext
 from app.services.session_service import SessionService
+from app.core.progress import get_progress_channel
+from app.core.runtime_context import get_runtime_context
 
 
 class Overwrite:
@@ -39,6 +42,47 @@ class DuplicateToolCallStreamingAgent:
         return type("Snapshot", (), {"values": {}})()
 
 
+class LiveProgressStreamingAgent:
+    async def astream(self, payload: dict[str, Any], **kwargs: Any):
+        channel = get_progress_channel()
+        assert channel is not None
+        session_id = get_runtime_context().session_id
+        channel.publish(
+            session_id=session_id,
+            source="tool_broker",
+            business_id="inventory",
+            step_id=f"step-{session_id}",
+            title="核对库存事实",
+            summary=f"正在核对 {session_id} 的库存",
+            status="running",
+        )
+        await asyncio.sleep(0.02)
+        channel.publish(
+            session_id=session_id,
+            source="tool_broker",
+            business_id="inventory",
+            step_id=f"step-{session_id}",
+            title="核对库存事实",
+            summary=f"正在核对 {session_id} 的库存",
+            status="completed",
+        )
+        yield {
+            "task_progress": {
+                "steps": [{
+                    "id": f"step-{session_id}",
+                    "title": "核对库存事实",
+                    "summary": f"正在核对 {session_id} 的库存",
+                    "status": "completed",
+                }],
+                "currentStep": f"step-{session_id}",
+            }
+        }
+        yield {"messages": [AIMessage(content=f"done-{session_id}")]}
+
+    async def aget_state(self, config: dict[str, Any]) -> Any:
+        return type("Snapshot", (), {"values": {}})()
+
+
 def test_extract_latest_ai_text_handles_langgraph_overwrite_messages() -> None:
     service = SessionService(agent=None)
     event = {"agent": {"messages": Overwrite([AIMessage(content="hello")])}}
@@ -61,6 +105,45 @@ def test_stream_message_does_not_emit_lifecycle_start_or_end() -> None:
     assert len(events) == 1
     assert events[0]["type"] == "message"
     assert events[0]["content"] == "done"
+
+
+def test_stream_message_emits_progress_before_agent_finishes() -> None:
+    service = SessionService(agent=LiveProgressStreamingAgent())
+
+    events = asyncio.run(_collect_stream(service))
+
+    assert [event["type"] for event in events] == [
+        "thinking_step",
+        "thinking_step",
+        "message",
+    ]
+    assert [event["data"]["status"] for event in events[:2]] == [
+        "running",
+        "completed",
+    ]
+    assert events[0]["data"]["step_id"] == events[1]["data"]["step_id"]
+    assert events[2]["content"] == "done-session-1"
+
+
+def test_stream_progress_channels_are_isolated_between_sessions() -> None:
+    service = SessionService(agent=LiveProgressStreamingAgent())
+
+    async def collect_both() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        return await asyncio.gather(
+            _collect_stream_for_session(service, "session-a"),
+            _collect_stream_for_session(service, "session-b"),
+        )
+
+    first, second = asyncio.run(collect_both())
+
+    assert all("session-b" not in str(event) for event in first)
+    assert all("session-a" not in str(event) for event in second)
+
+
+async def _collect_stream_for_session(
+    service: SessionService, session_id: str
+) -> list[dict[str, Any]]:
+    return [event async for event in service.stream_message(session_id, "hello")]
 
 
 def test_extract_latest_ai_text_ignores_non_sequence_overwrite_messages() -> None:

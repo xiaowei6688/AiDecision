@@ -125,6 +125,7 @@ class BusinessAgentManifest:
     system_prompt: str
     datasources: tuple[str, ...]
     action_prefixes: tuple[str, ...]
+    readonly_tool_names: tuple[str, ...] = ()
     cross_system_notes: str = ""
 
     def public_dict(self) -> dict[str, object]:
@@ -134,6 +135,7 @@ class BusinessAgentManifest:
             "description": self.description,
             "datasources": list(self.datasources),
             "action_prefixes": list(self.action_prefixes),
+            "readonly_tool_names": list(self.readonly_tool_names),
         }
 
 

@@ -18,6 +18,7 @@ from app.integrations.inspection.ui import (
     inspection_human_interrupt_projection,
 )
 from app.integrations.inspection.workflows import (
+    inspection_build_plan_fill_state,
     inspection_query_coverage,
     inspection_query_device_data,
     inspection_query_plan_detail,
@@ -82,6 +83,58 @@ def test_inspection_plan_objects_are_normalized_for_legacy_payload() -> None:
         "parentDeviceGuid": "line-1",
         "parentDeviceName": "线路1",
     }]
+
+
+def test_inspection_plan_fields_follow_legacy_type_and_name_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.integrations.inspection.models.time.time", lambda: 1787000000)
+
+    payload = CreateInspectionPlanInput.model_validate({
+        "planType": "临时计划",
+        "planName": "10kV十九线#1-6 临时巡检计划",
+        "inspectStartTime": "2026-08-18 08:00:00",
+        "inspectEndTime": "2026-08-18 10:00:00",
+        "planObjectList": [{
+            "deviceGuid": "tower-1",
+            "deviceName": "10kV十九线#1",
+            "major": "dms",
+            "parentDeviceGuid": "line-1",
+            "parentDeviceName": "10kV十九线",
+        }],
+    }).model_dump(mode="json")
+
+    assert payload["plan_type"] == "5"
+    assert payload["plan_name"] == "临时计划-2026-08-18-10kV十九线巡检-1787000000"
+
+
+def test_inspection_plan_fill_state_is_stable_when_action_validates_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.integrations.inspection.models.time.time", lambda: 1787000000)
+    result = inspection_build_plan_fill_state.invoke({
+        "plan_type": "临时计划",
+        "inspect_start_time": "2026-08-18 08:00:00",
+        "inspect_end_time": "2026-08-18 10:00:00",
+        "plan_object_list": [{
+            "deviceGuid": "tower-1",
+            "deviceName": "10kV十九线#1",
+            "major": "dms",
+            "parentDeviceGuid": "line-1",
+            "parentDeviceName": "10kV十九线",
+        }],
+    })
+    generated_name = result["executePayload"]["planName"]
+
+    monkeypatch.setattr("app.integrations.inspection.models.time.time", lambda: 1787000999)
+    validated = CreateInspectionPlanInput.model_validate(
+        result["executePayload"]
+    ).model_dump(mode="json", by_alias=True)
+
+    assert result["ok"] is True
+    assert result["executePayload"]["planType"] == "5"
+    assert generated_name == "临时计划-2026-08-18-10kV十九线巡检-1787000000"
+    assert validated["planName"] == generated_name
 
 
 def test_inspection_plan_object_old_fields_override_blank_legacy_keys() -> None:

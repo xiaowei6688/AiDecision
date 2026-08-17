@@ -6,21 +6,17 @@ import re
 from typing import Any
 
 from langchain_core.tools import tool
+from pydantic import ValidationError
 
-from app.integrations.inspection.models import normalize_plan_object
+from app.integrations.inspection.models import (
+    CreateInspectionPlanInput,
+    PLAN_TYPES,
+    normalize_plan_object,
+)
 from app.adapters.text_to_sql import TextToSqlClient
 from app.core.config import get_settings
 from app.integrations.inspection.auth import InspectionAuthError, get_inspection_auth_client
 from app.integrations.inspection.config import get_inspection_settings
-
-
-PLAN_TYPES = {
-    "1": "年计划",
-    "2": "月计划",
-    "3": "周计划",
-    "4": "日计划",
-    "5": "临时计划",
-}
 
 
 @tool
@@ -92,6 +88,42 @@ def inspection_query_device_data(parent_device_name: str, ranges: str = "全部"
         "count": len(plan_object_list),
         "skippedRows": skipped_rows,
         "summary": f"已获取 {len(plan_object_list)} 条杆塔数据，创建计划时请直接使用 planObjectList。",
+    }
+
+
+@tool
+def inspection_build_plan_fill_state(
+    plan_type: str,
+    inspect_start_time: str,
+    inspect_end_time: str,
+    plan_object_list: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """按旧巡检系统规则组装计划类型、唯一计划名称和真实巡检对象。"""
+
+    try:
+        plan = CreateInspectionPlanInput.model_validate({
+            "planType": plan_type,
+            "planName": "由巡检插件生成",
+            "inspectStartTime": inspect_start_time,
+            "inspectEndTime": inspect_end_time,
+            "planObjectList": plan_object_list,
+        })
+    except ValidationError as exc:
+        return _error("invalid_plan_fields", str(exc))
+    payload = plan.model_dump(mode="json", by_alias=True)
+    return {
+        "ok": True,
+        "executePayload": payload,
+        "displayFields": {
+            "planName": payload["planName"],
+            "planType": PLAN_TYPES[payload["planType"]],
+            "inspectStartTime": payload["inspectStartTime"],
+            "inspectEndTime": payload["inspectEndTime"],
+            "planObjectListNames": [
+                item["deviceName"] for item in payload["planObjectList"]
+            ],
+        },
+        "summary": "已按旧巡检系统规则生成计划类型、计划名称和巡检对象。",
     }
 
 

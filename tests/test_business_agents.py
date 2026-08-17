@@ -1,5 +1,6 @@
 import pytest
 from langchain_core.messages import AIMessage
+from langchain_core.tools import tool
 
 from app.agents.business_agents import (
     BusinessCollaborationPlan,
@@ -92,6 +93,7 @@ async def test_business_advice_rejects_out_of_scope_actions() -> None:
         action_prefixes=("inventory.",),
     )
     registry.register(manifest)
+    context = PluginContext()
     result = await _consult_business_agent(
         _AdviceModel(
             '{"recommended_actions":[{"action_id":"finance.adjust_ledger",'
@@ -101,6 +103,8 @@ async def test_business_advice_rejects_out_of_scope_actions() -> None:
         "采购物料",
         {},
         ActionRegistry(),
+        context.tools,
+        context.tool_broker,
     )
 
     assert result["status"] == "failed"
@@ -122,14 +126,74 @@ async def test_local_business_agent_runtime_uses_structured_advice_contract() ->
         _AdviceModel('{"facts_and_constraints":["库存不足"]}'),
     )
 
-    advice = await runtime.invoke(BusinessAgentInvocation(
+    result = await runtime.invoke(BusinessAgentInvocation(
         manifest=manifest,
         task="采购物料",
         context={},
         available_actions=[],
     ))
 
-    assert advice.facts_and_constraints == ["库存不足"]
+    assert result.advice.facts_and_constraints == ["库存不足"]
+
+
+@pytest.mark.asyncio
+async def test_business_agent_can_call_authorized_readonly_tool() -> None:
+    calls: list[str] = []
+
+    @tool
+    def query_stock(product: str) -> dict[str, object]:
+        """查询库存。"""
+
+        calls.append(product)
+        return {"product": product, "quantity": 3}
+
+    class ToolCallingModel:
+        def __init__(self) -> None:
+            self._responses = [
+                AIMessage(
+                    content="",
+                    tool_calls=[{
+                        "name": "query_stock",
+                        "args": {"product": "绝缘子"},
+                        "id": "call-1",
+                    }],
+                ),
+                AIMessage(content='{"facts_and_constraints":["库存为3"]}'),
+            ]
+
+        def bind_tools(self, tools: list[object]) -> "ToolCallingModel":
+            assert [getattr(item, "name", None) for item in tools] == ["query_stock"]
+            return self
+
+        async def ainvoke(self, messages: object) -> AIMessage:
+            return self._responses.pop(0)
+
+    manifest = BusinessAgentManifest(
+        business_id="inventory",
+        title="库存",
+        description="测试 Agent",
+        system_prompt="",
+        datasources=("inventory",),
+        action_prefixes=("inventory.",),
+        readonly_tool_names=("query_stock",),
+    )
+    runtime = build_business_agent_runtime(manifest, ToolCallingModel())
+    context = PluginContext()
+    context.tools.register(query_stock, read_only=True)
+
+    result = await runtime.invoke(BusinessAgentInvocation(
+        manifest=manifest,
+        task="查询绝缘子库存",
+        context={},
+        available_actions=[],
+        available_tools=(query_stock,),
+        tool_broker=context.tool_broker,
+    ))
+
+    assert calls == ["绝缘子"]
+    assert result.advice.facts_and_constraints == ["库存为3"]
+    assert result.tool_audit[0].business_id == "inventory"
+    assert result.tool_audit[0].evidence["quantity"] == 3
 
 
 def test_business_collaboration_plan_builds_parallel_waves() -> None:

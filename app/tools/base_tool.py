@@ -32,17 +32,14 @@ def _plugin_context() -> Any:
 
 
 def _action_registry() -> Any:
-    context = _plugin_context()
     return _plugin_context().action_registry
 
 
 def _action_executor() -> Any:
-    context = _plugin_context()
     return _plugin_context().action_executor
 
 
 def _business_agent_registry() -> Any:
-    context = _plugin_context()
     return _plugin_context().business_agent_registry
 
 
@@ -597,5 +594,3 @@ AGENT_TOOLS = [
     semantic_query,
     call_business_action,
 ]
-DST_TOOLS = AGENT_TOOLS
-HUMAN_INPUT_TOOLS = [request_human_input]

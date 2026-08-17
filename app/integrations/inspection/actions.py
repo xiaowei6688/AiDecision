@@ -18,13 +18,14 @@ CREATE_PLAN = ActionSpec(
     description=(
         "在巡检系统中创建计划，并绑定已确认的线路和杆塔。"
         "planObjectList 必须来自 inspection_query_device_data 返回的真实 planObjectList，"
+        "planType、planName 和完整参数必须来自 inspection_build_plan_fill_state 的 executePayload，"
         "不得由模型自行根据线路名或杆塔名编造 deviceGuid/parentDeviceGuid。"
         "计划创建成功后只应结束计划流程，不应自动进入工单创建。"
     ),
     system="inspection",
     inputs=[
-        ActionInputSpec("planType", description="计划类型字典值"),
-        ActionInputSpec("planName", description="计划名称"),
+        ActionInputSpec("planType", description="计划类型字典键，例如临时计划为 5"),
+        ActionInputSpec("planName", description="按旧巡检系统规则生成的唯一计划名称"),
         ActionInputSpec("inspectStartTime", description="开始时间"),
         ActionInputSpec("inspectEndTime", description="结束时间"),
         ActionInputSpec(

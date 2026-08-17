@@ -28,7 +28,7 @@ def build_agent_tools(
     available["plan_business_collaboration"] = _build_plan_business_collaboration_tool(plugin_context)
     available["consult_business_agents"] = _build_consult_business_agents_tool(model, plugin_context)
     available["run_business_collaboration"] = _build_run_business_collaboration_tool(model, plugin_context)
-    available.update({item.name: item for item in plugin_context.tools.list()})
+    available.update({item.name: item for item in plugin_context.tools.values()})
     return list(available.values())
 
 
@@ -99,15 +99,21 @@ def _build_consult_business_agents_tool(
                     task,
                     context or {},
                     plugin_context.action_registry,
+                    plugin_context.tools,
+                    plugin_context.tool_broker,
                 )
                 for agent in selected
             ]
         )
-        return {
+        result: dict[str, Any] = {
             "status": "success",
             "task": task,
             "advice": advice,
         }
+        progress = _tool_audit_progress(advice)
+        if progress is not None:
+            result["task_progress"] = progress
+        return result
 
     return consult_business_agents
 
@@ -152,16 +158,23 @@ def _build_run_business_collaboration_tool(
                         },
                     },
                     action_registry,
+                    plugin_context.tools,
+                    plugin_context.tool_broker,
                 )
                 for step in wave
             ])
             advice_by_agent.update({result["business_id"]: result for result in results})
-        return {
+        advice = [advice_by_agent[step.business_id] for step in validated.steps]
+        result: dict[str, Any] = {
             "status": "success",
             "task": task,
             "plan": validated.model_dump(),
-            "advice": [advice_by_agent[step.business_id] for step in validated.steps],
+            "advice": advice,
         }
+        progress = _tool_audit_progress(advice)
+        if progress is not None:
+            result["task_progress"] = progress
+        return result
 
     return run_business_collaboration
 
@@ -172,6 +185,8 @@ async def _consult_business_agent(
     task: str,
     context: dict[str, Any],
     action_registry: Any,
+    tool_registry: Any,
+    tool_broker: Any,
 ) -> dict[str, Any]:
     actions = [
         action.public_dict()
@@ -179,14 +194,17 @@ async def _consult_business_agent(
         if any(action.action_id.startswith(prefix) for prefix in agent.action_prefixes)
     ]
     try:
+        readonly_tools = tuple(tool_registry.read_only(agent.readonly_tool_names))
         runtime = build_business_agent_runtime(agent, model)
-        advice = await runtime.invoke(BusinessAgentInvocation(
+        run_result = await runtime.invoke(BusinessAgentInvocation(
             manifest=agent,
             task=task,
             context=context,
             available_actions=actions,
+            available_tools=readonly_tools,
+            tool_broker=tool_broker,
         ))
-    except (RuntimeError, ValueError) as exc:
+    except (PermissionError, RuntimeError, ValueError) as exc:
         return {
             "business_id": agent.business_id,
             "title": agent.title,
@@ -194,6 +212,7 @@ async def _consult_business_agent(
             "error_code": "INVALID_BUSINESS_ADVICE",
             "message": str(exc),
         }
+    advice = run_result.advice
     invalid_sources = {
         query.datasource for query in advice.recommended_queries
     } - set(agent.datasources)
@@ -216,4 +235,44 @@ async def _consult_business_agent(
         "title": agent.title,
         "status": "success",
         "advice": advice.model_dump(),
+        "tool_audit": [record.model_dump() for record in run_result.tool_audit],
+    }
+
+
+def _tool_audit_progress(results: list[dict[str, Any]]) -> dict[str, Any] | None:
+    records = [
+        record
+        for result in results
+        for record in result.get("tool_audit", [])
+        if isinstance(record, dict)
+    ]
+    if not records:
+        return None
+    steps = [
+        {
+            "id": record.get("request_id"),
+            "title": record.get("title") or "核对业务事实",
+            "status": "completed" if record.get("status") == "success" else "failed",
+            "summary": record.get("summary"),
+            "data": {
+                "businessId": record.get("business_id"),
+                "toolName": record.get("tool_name"),
+                "durationMs": record.get("duration_ms"),
+            },
+        }
+        for record in records
+    ]
+    failed = next(
+        (step["id"] for step in steps if step["status"] == "failed"),
+        None,
+    )
+    return {
+        "steps": steps,
+        "currentStep": steps[-1]["id"],
+        "completedSteps": [
+            step["id"] for step in steps if step["status"] == "completed"
+        ],
+        "failedStep": failed,
+        "nextStep": None,
+        "summary": steps[-1]["summary"],
     }

@@ -43,6 +43,10 @@ uv run uvicorn app.main:app --reload
 工具列表。主 Agent 不导入某个具体业务包；业务逻辑应放在对应的
 `app/integrations/<name>/` 中。同一进程内多个应用实例不会共享插件能力。
 
+业务 Agent 请求只读工具时统一经过 `PluginContext.tool_broker`。Broker 校验插件授权，
+注入当前用户和 session 上下文，并把调用证据返回主 Agent；写操作不经过 Broker，仍由
+`ActionExecutor` 和确认流程执行。
+
 常用接口：
 
 - `GET /health`
@@ -83,7 +87,7 @@ class InventoryBundle:
     def register_context(self, context: PluginContext) -> list[APIRouter]:
         context.action_registry.register(INVENTORY_ACTION)
         context.action_executor.register_adapter("inventory", InventoryAdapter())
-        context.tools.register(query_inventory)
+        context.tools.register(query_inventory, read_only=True)
         context.business_agent_registry.register(inventory_agent)
         return [inventory_router]
 ```

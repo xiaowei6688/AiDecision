@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from collections.abc import Callable
 import hashlib
@@ -11,6 +12,7 @@ from app.agents.state import default_dst_metadata
 from app.services.context_compressor import ContextCompressor
 from app.schemas.chat import HumanResumeRequest, ServerEventType, SessionStateResponse
 from app.core.runtime_context import RequestRuntimeContext, reset_runtime_context, set_runtime_context
+from app.core.progress import ProgressChannel, ProgressEvent, reset_progress_channel, set_progress_channel
 from app.integrations.context import PluginContext
 
 
@@ -82,16 +84,86 @@ class SessionService:
             },
         }
         token = set_runtime_context(self._runtime_context(session_id))
-        seen_thinking_steps: set[tuple[str | None, str | None, str | None]] = set()
+        progress_channel = ProgressChannel()
+        progress_token = set_progress_channel(progress_channel)
+        seen_thinking_steps: set[tuple[str | None, str | None, str | None, str | None]] = set()
+        agent_events: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+
+        async def produce_agent_events() -> None:
+            try:
+                async for event in self._agent.astream(
+                    payload, config=self._config(session_id), stream_mode="updates"
+                ):
+                    await agent_events.put(("event", event))
+            finally:
+                await agent_events.put(("done", None))
+
+        producer = asyncio.create_task(produce_agent_events())
         try:
-            async for event in self._agent.astream(
-                payload, config=self._config(session_id), stream_mode="updates"
-            ):
-                normalized = self._normalize_event(session_id, event)
+            agent_done = False
+            while not agent_done:
+                agent_get = asyncio.create_task(agent_events.get())
+                progress_get = asyncio.create_task(progress_channel.receive())
+                done, pending = await asyncio.wait(
+                    {agent_get, progress_get},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                ordered_done = [
+                    task for task in (progress_get, agent_get) if task in done
+                ]
+                for task in ordered_done:
+                    if task is agent_get:
+                        kind, value = task.result()
+                    else:
+                        kind, value = "progress", task.result()
+                    if kind == "done":
+                        agent_done = True
+                        continue
+                    normalized = (
+                        self._progress_event(session_id, value)
+                        if isinstance(value, ProgressEvent)
+                        else self._normalize_event(session_id, value)
+                    )
+                    if self._should_emit_stream_event(normalized, seen_thinking_steps):
+                        yield normalized
+
+            await producer
+            while True:
+                progress_event = progress_channel.receive_nowait()
+                if progress_event is None:
+                    break
+                normalized = self._progress_event(session_id, progress_event)
                 if self._should_emit_stream_event(normalized, seen_thinking_steps):
                     yield normalized
         finally:
+            if not producer.done():
+                producer.cancel()
+                await asyncio.gather(producer, return_exceptions=True)
+            reset_progress_channel(progress_token)
             reset_runtime_context(token)
+
+    def _progress_event(self, session_id: str, event: ProgressEvent) -> dict[str, Any]:
+        return {
+            "type": ServerEventType.THINKING_STEP.value,
+            "session_id": session_id,
+            "content": event.summary,
+            "data": {
+                "step_id": event.step_id,
+                "step_name": event.title,
+                "status": event.status,
+                "summary": event.summary,
+                "summary_data": {
+                    **event.data,
+                    "source": event.source,
+                    **({"businessId": event.business_id} if event.business_id else {}),
+                },
+                "phase": "middle",
+            },
+        }
 
     async def resume(
         self,
@@ -312,16 +384,24 @@ class SessionService:
     def _should_emit_stream_event(
         self,
         event: dict[str, Any],
-        seen_thinking_steps: set[tuple[str | None, str | None, str | None]],
+        seen_thinking_steps: set[tuple[str | None, str | None, str | None, str | None]],
     ) -> bool:
         if event.get("type") != ServerEventType.THINKING_STEP.value:
             return True
         data = event.get("data")
         data = data if isinstance(data, dict) else {}
+        status = self._stringify(data.get("status"))
+        step_id = self._stringify(data.get("step_id"))
         key = (
-            self._stringify(data.get("status")),
+            status,
+            step_id,
+            None,
+            None,
+        ) if step_id else (
+            status,
             self._stringify(event.get("content") or data.get("summary") or data.get("step_name")),
             self._stringify(data.get("phase")),
+            None,
         )
         if key in seen_thinking_steps:
             return False

@@ -13,7 +13,8 @@ run_business_collaboration。只有简单且相互独立的领域咨询才可直
 业务 Agent 是你调度的领域能力，不是用户选择的根 Agent。跨系统任务先识别涉及的 business_id，
 调度图中无依赖的业务 Agent 并发运行，有依赖的业务 Agent 必须接收前置 Agent 的结构化建议；再自行汇总
 其建议、处理依赖与冲突，按顺序调用
-semantic_query、list_business_actions、call_business_action。业务 Agent 只提供建议，不能执行真实动作。
+semantic_query、list_business_actions、call_business_action。业务 Agent 可以调用插件明确授权的只读工具核对领域事实，
+但只提供结构化建议，不能执行真实动作。
 业务 Agent 返回的结构化 advice 需要先检查 status；只采纳 success 结果，且仍需自行验证建议是否满足
 用户目标和当前事实，不能把建议视为已执行结果。
 当业务写操作所需字段已经齐备、即将提交给业务系统或旧前端执行时，必须先调用 request_human_input

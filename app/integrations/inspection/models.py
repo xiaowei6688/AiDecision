@@ -1,8 +1,19 @@
 """Validated command payloads for the inspection system."""
 
+import re
+import time
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
+
+
+PLAN_TYPES = {
+    "1": "年计划",
+    "2": "月计划",
+    "3": "周计划",
+    "4": "日计划",
+    "5": "临时计划",
+}
 
 
 class CreateInspectionPlanInput(BaseModel):
@@ -29,6 +40,15 @@ class CreateInspectionPlanInput(BaseModel):
                 raise ValueError(
                     f"planObjectList[{index}] 疑似使用名称冒充 GUID，请先调用 inspection_query_device_data 查询真实杆塔数据"
                 )
+        self.plan_type = normalize_plan_type(self.plan_type)
+        line_name = str(self.plan_object_list[0]["parentDeviceName"]).strip()
+        start_date = _inspection_start_date(self.inspect_start_time)
+        self.plan_name = legacy_plan_name(
+            self.plan_name,
+            PLAN_TYPES[self.plan_type],
+            start_date,
+            line_name,
+        )
         return self
 
 
@@ -81,6 +101,42 @@ def normalize_plan_object(item: dict[str, Any]) -> dict[str, Any]:
             "线路名称",
         ),
     }
+
+
+def normalize_plan_type(value: str) -> str:
+    normalized = value.strip()
+    if normalized in PLAN_TYPES:
+        return normalized
+    for key, name in PLAN_TYPES.items():
+        if normalized == name:
+            return key
+    raise ValueError(f"不支持的巡检计划类型：{value}")
+
+
+def legacy_plan_name(
+    current_name: str,
+    plan_type_name: str,
+    start_date: str,
+    line_name: str,
+) -> str:
+    prefix = f"{plan_type_name}-{start_date}-{line_name}巡检-"
+    if re.fullmatch(rf"{re.escape(prefix)}\d{{10}}", current_name.strip()):
+        return current_name.strip()
+    timestamp = str(int(time.time()))
+    if len(timestamp) != 10:
+        raise ValueError("当前 Unix 时间戳不是10位")
+    generated = f"{prefix}{timestamp}"
+    if len(generated) > 200:
+        raise ValueError("按旧版规则生成的计划名称超过200个字符")
+    return generated
+
+
+def _inspection_start_date(value: str) -> str:
+    normalized = value.strip()
+    start_date = normalized.split("T", 1)[0].split(" ", 1)[0]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start_date):
+        raise ValueError("inspectStartTime 必须包含 YYYY-MM-DD 格式的日期")
+    return start_date
 
 
 def _first_present(item: dict[str, Any], *keys: str) -> Any:

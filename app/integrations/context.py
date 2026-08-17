@@ -11,6 +11,7 @@ from app.agents.business_agents import BusinessAgentRegistry
 from app.integrations.projections import ProjectionRegistry
 from app.integrations.tools import IntegrationToolRegistry
 from app.integrations.websocket_actions import ActionResultHandlerRegistry
+from app.tools.broker import ToolBroker
 
 
 @dataclass
@@ -32,9 +33,11 @@ class PluginContext:
         default_factory=ActionResultHandlerRegistry
     )
     action_executor: BusinessActionExecutor = field(init=False)
+    tool_broker: ToolBroker = field(init=False)
 
     def __post_init__(self) -> None:
         self.action_executor = BusinessActionExecutor(
             registry=self.action_registry,
             policy_engine=self.policy_engine,
         )
+        self.tool_broker = ToolBroker(self.tools)

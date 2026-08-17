@@ -2,7 +2,7 @@ from deepagents import SubAgent
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from app.agents.middleware import SummaryInjectionMiddleware
-from app.tools.base_tool import HUMAN_INPUT_TOOLS
+from app.tools.base_tool import request_human_input, update_dialogue_state
 
 
 def build_requirements_analyst(model: BaseChatModel) -> SubAgent:
@@ -16,7 +16,7 @@ def build_requirements_analyst(model: BaseChatModel) -> SubAgent:
             "如果只是缺少普通信息，直接用自然语言向用户追问，不要调用 request_human_input。"
             "只有需要用户审批、确认可执行动作或处理高风险决定时，才调用 request_human_input。"
         ),
-        "tools": HUMAN_INPUT_TOOLS,
+        "tools": [update_dialogue_state, request_human_input],
         "model": model,
         "middleware": [SummaryInjectionMiddleware()],
     }

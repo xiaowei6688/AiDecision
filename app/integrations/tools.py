@@ -15,9 +15,10 @@ class ToolStepDescription:
 class IntegrationToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Any] = {}
+        self._read_only: set[str] = set()
         self._steps: dict[str, ToolStepDescription] = {}
 
-    def register(self, value: Any) -> None:
+    def register(self, value: Any, *, read_only: bool = False) -> None:
         name = getattr(value, "name", None)
         if not isinstance(name, str) or not name.strip():
             raise ValueError("plugin tool must expose a non-empty name")
@@ -25,6 +26,8 @@ class IntegrationToolRegistry:
         if current is not None and current is not value:
             raise ValueError(f"plugin tool already registered: {name}")
         self._tools[name] = value
+        if read_only:
+            self._read_only.add(name)
 
     def register_step(
         self, tool_name: str, title: str, summary: str | None = None
@@ -33,8 +36,19 @@ class IntegrationToolRegistry:
         if description is not None:
             self._steps[tool_name] = description
 
-    def list(self) -> list[Any]:
+    def values(self) -> list[Any]:
         return list(self._tools.values())
+
+    def read_only(self, tool_names: tuple[str, ...]) -> list[Any]:
+        tools: list[Any] = []
+        for name in tool_names:
+            value = self._tools.get(name)
+            if value is None:
+                raise ValueError(f"unknown plugin tool: {name}")
+            if name not in self._read_only:
+                raise ValueError(f"business Agent tool must be read-only: {name}")
+            tools.append(value)
+        return tools
 
     def step(self, tool_name: str) -> ToolStepDescription:
         return self._steps.get(tool_name, _infer_tool_step(tool_name))

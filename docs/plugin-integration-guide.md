@@ -83,6 +83,7 @@ inventory_agent = BusinessAgentManifest(
     ),
     datasources=("inventory_mysql",),
     action_prefixes=("inventory.",),
+    readonly_tool_names=("inventory_query_stock",),
 )
 ```
 
@@ -96,9 +97,12 @@ inventory_agent = BusinessAgentManifest(
 | `system_prompt` | 领域约束和分析规则 |
 | `datasources` | 允许建议使用的数据源 |
 | `action_prefixes` | 允许建议使用的动作前缀 |
+| `readonly_tool_names` | 允许业务 Agent 自主调用的只读插件工具 |
 | `cross_system_notes` | 可选，跨系统协作限制 |
 
-业务 Agent 的输出是结构化建议，主 Agent 负责根据建议调用统一查询工具或动作工具。
+业务 Agent 可以调用 `readonly_tool_names` 中授权的只读工具核对领域事实，最终输出结构化
+建议。实际调用会经过框架的 `ToolBroker`，不会由业务 Agent 绕过框架直接执行。写操作、
+跨系统动作和用户确认仍由主 Agent 统一执行。
 
 ## 4. 实现查询工具
 
@@ -277,7 +281,7 @@ class InventoryBundle:
 
     def register_context(self, context: PluginContext) -> Sequence[APIRouter]:
         context.business_agent_registry.register(inventory_agent)
-        context.tools.register(inventory_query_stock)
+        context.tools.register(inventory_query_stock, read_only=True)
         context.tools.register_step(
             "inventory_query_stock",
             "核对库存事实",
@@ -313,6 +317,33 @@ app.integrations.inventory.bundle.bundle
 ```
 
 不需要在主 Agent、`SessionService` 或 WebSocket 中添加 `inventory` 分支。
+
+只有同时满足以下两个条件，工具才会下发给业务 Agent：
+
+```text
+工具注册时使用 read_only=True
+BusinessAgentManifest.readonly_tool_names 包含该工具名
+```
+
+未注册、未授权或非只读工具会在业务 Agent 调度阶段被拒绝。插件写操作不得注册为
+`read_only=True`，应通过 `ActionSpec + Adapter` 由主 Agent 执行。
+
+`ToolBroker` 会为每次只读调用统一记录：
+
+```text
+request_id
+session_id
+user_id
+business_id
+tool_name
+arguments
+status
+duration_ms
+evidence
+```
+
+审计记录会随 Business Agent 的结构化结果返回给主 Agent，并转换成通用
+`task_progress/thinking_step`。插件不需要自行实现工具审计或前端步骤事件。
 
 ## 8. 自定义前端事件
 
