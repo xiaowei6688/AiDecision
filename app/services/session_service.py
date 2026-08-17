@@ -87,6 +87,9 @@ class SessionService:
         progress_channel = ProgressChannel()
         progress_token = set_progress_channel(progress_channel)
         seen_thinking_steps: set[tuple[str | None, str | None, str | None, str | None]] = set()
+        lifecycle_statuses: set[tuple[str, str]] = set()
+        active_thinking_steps: dict[str, dict[str, Any]] = {}
+        pending_tool_steps: dict[str, dict[str, Any]] = {}
         agent_events: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
 
         async def produce_agent_events() -> None:
@@ -123,22 +126,61 @@ class SessionService:
                     if kind == "done":
                         agent_done = True
                         continue
-                    normalized = (
-                        self._progress_event(session_id, value)
+                    normalized_events = (
+                        [self._progress_event(session_id, value)]
                         if isinstance(value, ProgressEvent)
-                        else self._normalize_event(session_id, value)
+                        else self._stream_events(
+                            session_id,
+                            value,
+                            pending_tool_steps,
+                        )
                     )
-                    if self._should_emit_stream_event(normalized, seen_thinking_steps):
-                        yield normalized
+                    for normalized in normalized_events:
+                        for lifecycle_event in self._thinking_lifecycle_events(
+                            normalized,
+                            lifecycle_statuses,
+                            active_thinking_steps,
+                        ):
+                            if self._should_emit_stream_event(
+                                lifecycle_event, seen_thinking_steps
+                            ):
+                                yield lifecycle_event
 
-            await producer
+            try:
+                await producer
+            except Exception:
+                for lifecycle_event in self._finalize_thinking_steps(
+                    active_thinking_steps,
+                    lifecycle_statuses,
+                    status="failed",
+                ):
+                    if self._should_emit_stream_event(
+                        lifecycle_event, seen_thinking_steps
+                    ):
+                        yield lifecycle_event
+                raise
             while True:
                 progress_event = progress_channel.receive_nowait()
                 if progress_event is None:
                     break
                 normalized = self._progress_event(session_id, progress_event)
-                if self._should_emit_stream_event(normalized, seen_thinking_steps):
-                    yield normalized
+                for lifecycle_event in self._thinking_lifecycle_events(
+                    normalized,
+                    lifecycle_statuses,
+                    active_thinking_steps,
+                ):
+                    if self._should_emit_stream_event(
+                        lifecycle_event, seen_thinking_steps
+                    ):
+                        yield lifecycle_event
+            for lifecycle_event in self._finalize_thinking_steps(
+                active_thinking_steps,
+                lifecycle_statuses,
+            ):
+                if self._should_emit_stream_event(
+                    lifecycle_event, seen_thinking_steps
+                ):
+                    yield lifecycle_event
         finally:
             if not producer.done():
                 producer.cancel()
@@ -164,6 +206,211 @@ class SessionService:
                 "phase": "middle",
             },
         }
+
+    def _stream_events(
+        self,
+        session_id: str,
+        event: Any,
+        pending_tool_steps: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        tool_events = self._tool_lifecycle_events_from_event(
+            session_id,
+            event,
+            pending_tool_steps,
+        )
+        progress = self._task_progress_from_event(event)
+        progress_events = (
+            self._task_progress_events(session_id, progress)
+            if progress is not None
+            else []
+        )
+        normalized = self._normalize_event(session_id, event)
+        if (
+            tool_events
+            or progress is not None
+            or self._event_has_display_tool_calls(event)
+        ) and normalized.get("type") == ServerEventType.THINKING_STEP.value:
+            normalized = {
+                "type": ServerEventType.DST_STATE.value,
+                "session_id": session_id,
+                "data": self._jsonable(event),
+            }
+        passthrough = [] if normalized.get("type") == ServerEventType.DST_STATE.value else [normalized]
+        return [*tool_events, *progress_events, *passthrough]
+
+    def _event_has_display_tool_calls(self, event: Any) -> bool:
+        for messages in self._message_sequences(event):
+            for message in messages:
+                if not isinstance(message, AIMessage):
+                    continue
+                if any(
+                    isinstance(call, dict)
+                    and not self._is_hidden_thinking_tool(str(call.get("name") or ""))
+                    for call in (getattr(message, "tool_calls", None) or [])
+                ):
+                    return True
+        return False
+
+    def _tool_lifecycle_events_from_event(
+        self,
+        session_id: str,
+        event: Any,
+        pending_steps: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        for messages in self._message_sequences(event):
+            for message in messages:
+                if isinstance(message, AIMessage):
+                    for call in getattr(message, "tool_calls", None) or []:
+                        if not isinstance(call, dict):
+                            continue
+                        tool_name = str(call.get("name") or "")
+                        call_id = str(call.get("id") or "").strip()
+                        if not call_id or self._is_hidden_thinking_tool(tool_name):
+                            continue
+                        description = self._plugin_context.tools.step(tool_name)
+                        step = {
+                            "type": ServerEventType.THINKING_STEP.value,
+                            "session_id": session_id,
+                            "content": description.summary,
+                            "data": {
+                                "step_id": f"framework.tool.{call_id}",
+                                "step_name": description.title,
+                                "status": "running",
+                                "summary": description.summary,
+                                "summary_data": {
+                                    "source": "tool_call",
+                                    "stepCount": 1,
+                                },
+                                "phase": "middle",
+                            },
+                        }
+                        if call_id not in pending_steps:
+                            pending_steps[call_id] = step
+                            events.append(step)
+                elif isinstance(message, ToolMessage):
+                    call_id = str(getattr(message, "tool_call_id", "") or "").strip()
+                    step = pending_steps.pop(call_id, None)
+                    if step is None:
+                        continue
+                    data = step.get("data")
+                    data = data if isinstance(data, dict) else {}
+                    events.append({
+                        **step,
+                        "data": {
+                            **data,
+                            "status": self._tool_message_status(message),
+                        },
+                    })
+        return events
+
+    def _tool_message_status(self, message: ToolMessage) -> str:
+        if getattr(message, "status", None) == "error":
+            return "failed"
+        try:
+            payload = json.loads(self._message_content_to_text(message.content))
+        except json.JSONDecodeError:
+            return "completed"
+        if isinstance(payload, dict) and (
+            payload.get("ok") is False
+            or payload.get("status") in {"failed", "error"}
+        ):
+            return "failed"
+        return "completed"
+
+    def _thinking_lifecycle_events(
+        self,
+        event: dict[str, Any],
+        statuses: set[tuple[str, str]],
+        active_steps: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if event.get("type") != ServerEventType.THINKING_STEP.value:
+            if event.get("type") in {
+                ServerEventType.MESSAGE.value,
+                "human_action_required",
+                ServerEventType.ERROR.value,
+            }:
+                return [
+                    *self._finalize_thinking_steps(active_steps, statuses),
+                    event,
+                ]
+            return [event]
+
+        data = event.get("data")
+        data = data if isinstance(data, dict) else {}
+        step_id = str(data.get("step_id") or "").strip()
+        status = str(data.get("status") or "running").strip().lower()
+        if status == "success":
+            status = "completed"
+            data = {**data, "status": status}
+            event = {**event, "data": data}
+        if status in {"pending", "skipped"}:
+            return []
+        if not step_id or status not in {"running", "completed", "failed"}:
+            return [event]
+
+        events: list[dict[str, Any]] = []
+        sequential_source = self._sequential_thinking_source(event)
+        if status == "running" and sequential_source is not None:
+            sequential_step_ids = {
+                active_id
+                for active_id, active_event in active_steps.items()
+                if active_id != step_id
+                and self._sequential_thinking_source(active_event) == sequential_source
+            }
+            events.extend(self._finalize_thinking_steps(
+                active_steps,
+                statuses,
+                step_ids=sequential_step_ids,
+            ))
+        if status in {"completed", "failed"} and (step_id, "running") not in statuses:
+            running = {
+                **event,
+                "data": {**data, "status": "running"},
+            }
+            statuses.add((step_id, "running"))
+            active_steps[step_id] = running
+            events.append(running)
+
+        key = (step_id, status)
+        if key in statuses:
+            return events
+        statuses.add(key)
+        events.append(event)
+        if status == "running":
+            active_steps[step_id] = event
+        else:
+            active_steps.pop(step_id, None)
+        return events
+
+    def _finalize_thinking_steps(
+        self,
+        active_steps: dict[str, dict[str, Any]],
+        statuses: set[tuple[str, str]],
+        status: str = "completed",
+        step_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        for step_id, event in list(active_steps.items()):
+            if step_ids is not None and step_id not in step_ids:
+                continue
+            active_steps.pop(step_id, None)
+            key = (step_id, status)
+            if key in statuses:
+                continue
+            statuses.add(key)
+            data = event.get("data")
+            data = data if isinstance(data, dict) else {}
+            events.append({**event, "data": {**data, "status": status}})
+        return events
+
+    def _sequential_thinking_source(self, event: dict[str, Any]) -> str | None:
+        data = event.get("data")
+        data = data if isinstance(data, dict) else {}
+        summary_data = data.get("summary_data")
+        summary_data = summary_data if isinstance(summary_data, dict) else {}
+        source = summary_data.get("source")
+        return str(source) if source in {"task_progress", "tool_call"} else None
 
     async def resume(
         self,
@@ -353,9 +600,12 @@ class SessionService:
                 str(call.get("name") or call.get("id") or "tool")
                 for call in tool_calls
                 if isinstance(call, dict)
+                and not self._is_hidden_thinking_tool(
+                    str(call.get("name") or call.get("id") or "tool")
+                )
             ]
             if not tool_names:
-                tool_names = ["tool"]
+                return None
             if any(self._is_human_input_tool(name) for name in tool_names):
                 return None
             descriptions = [
@@ -416,6 +666,14 @@ class SessionService:
         normalized = tool_name.replace("-", "_").lower()
         return normalized in {"request_human_input", "human_input"} or normalized.endswith(".request_human_input")
 
+    def _is_hidden_thinking_tool(self, tool_name: str) -> bool:
+        normalized = tool_name.replace("-", "_").lower()
+        return self._is_human_input_tool(normalized) or normalized in {
+            "update_task_progress",
+            "update_dialogue_state",
+            "write_todos",
+        }
+
     def _frontend_callback_completion_from_event(self, event: Any) -> dict[str, Any] | None:
         for candidate in self._candidate_dicts(event):
             if candidate.get("status") not in {"success", "updated"}:
@@ -467,7 +725,10 @@ class SessionService:
                 "step_name": current.get("title") or current_step,
                 "status": status,
                 "summary": current.get("summary") or progress.get("summary") or current.get("title"),
-                "summary_data": current.get("data") or {},
+                "summary_data": {
+                    **(current.get("data") or {}),
+                    "source": "task_progress",
+                },
                 "steps": steps,
                 "currentStep": current_step,
                 "completedSteps": progress.get("completedSteps") or [
@@ -477,6 +738,28 @@ class SessionService:
                 "nextStep": progress.get("nextStep"),
             },
         }
+
+    def _task_progress_events(
+        self,
+        session_id: str,
+        progress: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        steps = progress.get("steps")
+        if not isinstance(steps, list):
+            return []
+        events = []
+        for step in steps:
+            if not isinstance(step, dict) or step.get("status") not in {
+                "running",
+                "completed",
+                "failed",
+            }:
+                continue
+            events.append(self._task_progress_event(
+                session_id,
+                {**progress, "currentStep": step.get("id")},
+            ))
+        return events
 
     def _task_progress_from_event(self, event: Any) -> dict[str, Any] | None:
         payload = self._first_dict_by_key(event, "task_progress")
@@ -539,9 +822,12 @@ class SessionService:
         steps = []
         for index, todo in enumerate(todos):
             if isinstance(todo, dict):
+                title = todo.get("title") or todo.get("content") or f"步骤 {index + 1}"
                 steps.append({
-                    "id": todo.get("id") or f"step-{index + 1}",
-                    "title": todo.get("title") or todo.get("content") or f"步骤 {index + 1}",
+                    "id": todo.get("id") or (
+                        f"framework.todo.{hashlib.sha1(str(title).encode('utf-8')).hexdigest()[:12]}"
+                    ),
+                    "title": title,
                     "status": todo.get("status") or "pending",
                     "summary": todo.get("summary"),
                 })
@@ -625,6 +911,8 @@ class SessionService:
                 continue
             latest = messages[-1]
             if isinstance(latest, AIMessage):
+                if getattr(latest, "tool_calls", None):
+                    continue
                 return self._message_content_to_text(latest.content)
 
         return None

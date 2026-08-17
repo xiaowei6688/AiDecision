@@ -42,6 +42,126 @@ class DuplicateToolCallStreamingAgent:
         return type("Snapshot", (), {"values": {}})()
 
 
+class CompletedProgressStreamingAgent:
+    async def astream(self, payload: dict[str, Any], **kwargs: Any):
+        yield {
+            "task_progress": {
+                "steps": [{
+                    "id": "assemble-plan",
+                    "title": "整理计划确认信息",
+                    "status": "completed",
+                }]
+            }
+        }
+        yield {"messages": [AIMessage(content="done")]}
+
+    async def aget_state(self, config: dict[str, Any]) -> Any:
+        return type("Snapshot", (), {"values": {}})()
+
+
+class ProgressInterruptStreamingAgent:
+    async def astream(self, payload: dict[str, Any], **kwargs: Any):
+        yield {
+            "todos": [{
+                "content": "整理待确认的计划数据",
+                "status": "in_progress",
+            }]
+        }
+        yield {"__interrupt__": [{"question": "请确认是否创建计划"}]}
+
+    async def aget_state(self, config: dict[str, Any]) -> Any:
+        return type("Snapshot", (), {"values": {}})()
+
+
+class MultipleRunningStepsAgent:
+    async def astream(self, payload: dict[str, Any], **kwargs: Any):
+        yield {
+            "task_progress": {
+                "steps": [
+                    {"id": "query", "title": "核对线路数据", "status": "running"},
+                    {"id": "assemble", "title": "整理计划数据", "status": "running"},
+                    {"id": "confirm", "title": "生成确认信息", "status": "running"},
+                ]
+            }
+        }
+        yield {"messages": [AIMessage(content="done")]}
+
+    async def aget_state(self, config: dict[str, Any]) -> Any:
+        return type("Snapshot", (), {"values": {}})()
+
+
+class NestedToolProgressAgent:
+    async def astream(self, payload: dict[str, Any], **kwargs: Any):
+        yield {
+            "task_progress": {
+                "steps": [{
+                    "id": "query-task",
+                    "title": "核对线路数据",
+                    "status": "running",
+                }]
+            }
+        }
+        yield {
+            "messages": [AIMessage(
+                content="",
+                tool_calls=[{"name": "semantic_query", "id": "call-1", "args": {}}],
+            )]
+        }
+        yield {"messages": [AIMessage(content="done")]}
+
+    async def aget_state(self, config: dict[str, Any]) -> Any:
+        return type("Snapshot", (), {"values": {}})()
+
+
+class PendingProgressAgent:
+    async def astream(self, payload: dict[str, Any], **kwargs: Any):
+        yield {
+            "task_progress": {
+                "steps": [{
+                    "id": "query-devices",
+                    "title": "查询线路杆塔信息",
+                    "status": "pending",
+                    "summary": "正在获取指定线路和杆塔范围的设备数据",
+                }]
+            }
+        }
+        yield {"messages": [AIMessage(content="请补充杆塔范围")]}
+
+    async def aget_state(self, config: dict[str, Any]) -> Any:
+        return type("Snapshot", (), {"values": {}})()
+
+
+class InternalAndBusinessToolAgent:
+    async def astream(self, payload: dict[str, Any], **kwargs: Any):
+        yield {
+            "messages": [AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "update_task_progress",
+                        "id": "progress-call",
+                        "args": {},
+                    },
+                    {
+                        "name": "inspection_query_coverage",
+                        "id": "coverage-call",
+                        "args": {},
+                    },
+                ],
+            )]
+        }
+        yield {
+            "messages": [ToolMessage(
+                content=json.dumps({"ok": True, "coverage": []}),
+                tool_call_id="coverage-call",
+            )]
+        }
+        yield {"messages": [AIMessage(content="done")]}
+
+    async def aget_state(self, config: dict[str, Any]) -> Any:
+        return type("Snapshot", (), {"values": {}})()
+
+
 class LiveProgressStreamingAgent:
     async def astream(self, payload: dict[str, Any], **kwargs: Any):
         channel = get_progress_channel()
@@ -123,6 +243,116 @@ def test_stream_message_emits_progress_before_agent_finishes() -> None:
     ]
     assert events[0]["data"]["step_id"] == events[1]["data"]["step_id"]
     assert events[2]["content"] == "done-session-1"
+
+
+def test_completed_progress_backfills_running_with_the_same_step_id() -> None:
+    service = SessionService(agent=CompletedProgressStreamingAgent())
+
+    events = asyncio.run(_collect_stream(service))
+
+    assert [event["type"] for event in events] == [
+        "thinking_step",
+        "thinking_step",
+        "message",
+    ]
+    assert [event["data"]["status"] for event in events[:2]] == [
+        "running",
+        "completed",
+    ]
+    assert events[0]["data"]["step_id"] == "assemble-plan"
+    assert events[1]["data"]["step_id"] == "assemble-plan"
+
+
+def test_active_progress_is_completed_before_human_action_required() -> None:
+    service = SessionService(agent=ProgressInterruptStreamingAgent())
+
+    events = asyncio.run(_collect_stream(service))
+
+    thinking = [event for event in events if event["type"] == "thinking_step"]
+    human = [event for event in events if event["type"] == "human_action_required"]
+    assert [event["data"]["status"] for event in thinking] == [
+        "running",
+        "completed",
+    ]
+    assert thinking[0]["data"]["step_id"] == thinking[1]["data"]["step_id"]
+    assert human
+    assert events.index(thinking[1]) < events.index(human[0])
+
+
+def test_sequential_steps_complete_before_the_next_step_starts() -> None:
+    service = SessionService(agent=MultipleRunningStepsAgent())
+
+    events = asyncio.run(_collect_stream(service))
+    thinking = [event for event in events if event["type"] == "thinking_step"]
+
+    assert [
+        (event["data"]["step_id"], event["data"]["status"])
+        for event in thinking
+    ] == [
+        ("query", "running"),
+        ("query", "completed"),
+        ("assemble", "running"),
+        ("assemble", "completed"),
+        ("confirm", "running"),
+        ("confirm", "completed"),
+    ]
+    assert events[-1]["type"] == "message"
+
+
+def test_nested_tool_does_not_prematurely_complete_parent_task_step() -> None:
+    service = SessionService(agent=NestedToolProgressAgent())
+
+    events = asyncio.run(_collect_stream(service))
+    thinking = [event for event in events if event["type"] == "thinking_step"]
+
+    assert [event["data"]["status"] for event in thinking[:2]] == [
+        "running",
+        "running",
+    ]
+    assert thinking[0]["data"]["step_id"] == "query-task"
+    assert thinking[1]["data"]["summary_data"]["source"] == "tool_call"
+    assert [event["data"]["status"] for event in thinking[2:]] == [
+        "completed",
+        "completed",
+    ]
+
+
+def test_pending_progress_is_not_emitted_to_frontend() -> None:
+    service = SessionService(agent=PendingProgressAgent())
+
+    events = asyncio.run(_collect_stream(service))
+
+    assert [event["type"] for event in events] == ["message"]
+    assert events[0]["content"] == "请补充杆塔范围"
+
+
+def test_internal_progress_tool_is_hidden_and_business_tool_completes_immediately() -> None:
+    context = PluginContext()
+    context.tools.register_step(
+        "inspection_query_coverage",
+        "分析巡检覆盖条件",
+        "正在结合机场覆盖情况判断可用的巡检方式",
+    )
+    service = SessionService(
+        agent=InternalAndBusinessToolAgent(),
+        plugin_context=context,
+    )
+
+    events = asyncio.run(_collect_stream(service))
+    thinking = [event for event in events if event["type"] == "thinking_step"]
+
+    assert [event["data"]["status"] for event in thinking] == [
+        "running",
+        "completed",
+    ]
+    assert thinking[0]["data"]["step_id"] == "framework.tool.coverage-call"
+    assert thinking[1]["data"]["step_id"] == "framework.tool.coverage-call"
+    assert all("Update task progress" not in str(event) for event in events)
+    assert [event["type"] for event in events] == [
+        "thinking_step",
+        "thinking_step",
+        "message",
+    ]
 
 
 def test_stream_progress_channels_are_isolated_between_sessions() -> None:
@@ -337,6 +567,27 @@ def test_normalize_event_does_not_emit_thinking_step_for_human_input_tool_call()
     assert normalized["type"] == "dst_state"
 
 
+def test_human_input_tool_narration_is_not_emitted_as_message() -> None:
+    service = SessionService(agent=None)
+    event = {
+        "messages": [
+            AIMessage(
+                content="现在我需要请求用户确认执行计划：\n\n",
+                tool_calls=[{
+                    "name": "request_human_input",
+                    "id": "call-1",
+                    "args": {"question": "请确认是否执行"},
+                }],
+            )
+        ]
+    }
+
+    normalized = service._normalize_event("session-1", event)
+
+    assert normalized["type"] == "dst_state"
+    assert normalized.get("content") is None
+
+
 def test_stream_message_deduplicates_repeated_thinking_steps() -> None:
     context = PluginContext()
     context.tools.register_step(
@@ -350,6 +601,15 @@ def test_stream_message_deduplicates_repeated_thinking_steps() -> None:
 
     events = __import__("asyncio").run(_collect_stream(service))
 
-    assert [event["type"] for event in events] == ["thinking_step", "message"]
+    assert [event["type"] for event in events] == [
+        "thinking_step",
+        "thinking_step",
+        "message",
+    ]
     assert events[0]["content"] == "正在基于当前问题核对业务数据来源"
-    assert events[1]["content"] == "done"
+    assert [event["data"]["status"] for event in events[:2]] == [
+        "running",
+        "completed",
+    ]
+    assert events[0]["data"]["step_id"] == events[1]["data"]["step_id"]
+    assert events[2]["content"] == "done"

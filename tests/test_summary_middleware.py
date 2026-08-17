@@ -1,6 +1,12 @@
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain.agents.middleware.types import ModelResponse
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from app.agents.middleware import SUMMARY_HEADER, SummaryInjectionMiddleware
+from app.agents.middleware import (
+    SUMMARY_HEADER,
+    ConfirmationProtocolMiddleware,
+    SummaryInjectionMiddleware,
+)
+from app.integrations.inspection.actions import CREATE_PLAN
 
 
 def _make_request(state, system_text="基础系统提示"):
@@ -86,3 +92,51 @@ def test_async_wrap_injects_summary() -> None:
 
     assert result == "ok"
     assert "异步历史" in captured["request"].system_message.text
+
+
+def test_confirmation_protocol_retries_registered_action_confirmation() -> None:
+    middleware = ConfirmationProtocolMiddleware([CREATE_PLAN])
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return ModelResponse(result=[AIMessage(content=(
+                "我已准备好为您创建临时巡检计划，详情如下：\n\n"
+                "- 计划类型：临时计划\n- 计划名称：临时计划-2026-08-23-线路巡检\n"
+                "请确认是否要创建此临时巡检计划。您可以回复\"是\"或\"否\"。"
+            ))])
+        return ModelResponse(result=[AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "call_business_action",
+                "id": "call-1",
+                "args": {"action_id": "inspection.create_plan", "params": {}},
+            }],
+        )])
+
+    result = middleware.wrap_model_call(_make_request({"messages": []}), handler)
+
+    assert len(requests) == 2
+    assert requests[1].tool_choice == "call_business_action"
+    assert "禁止用普通 assistant 文本请求用户确认业务动作" in (
+        requests[1].system_message.text
+    )
+    assert result.result[0].tool_calls[0]["name"] == "call_business_action"
+
+
+def test_confirmation_protocol_keeps_missing_field_question_as_message() -> None:
+    middleware = ConfirmationProtocolMiddleware([CREATE_PLAN])
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        return ModelResponse(result=[AIMessage(content=(
+            "请补充巡检日期，并确认线路名称是否为10kV十九线。"
+        ))])
+
+    result = middleware.wrap_model_call(_make_request({"messages": []}), handler)
+
+    assert calls == 1
+    assert result.result[0].content == "请补充巡检日期，并确认线路名称是否为10kV十九线。"

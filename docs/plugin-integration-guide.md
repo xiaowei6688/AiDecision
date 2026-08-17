@@ -345,6 +345,33 @@ evidence
 审计记录会随 Business Agent 的结构化结果返回给主 Agent，并转换成通用
 `task_progress/thinking_step`。插件不需要自行实现工具审计或前端步骤事件。
 
+### 实时步骤生命周期
+
+框架保证每个可展示步骤都按稳定的 `step_id` 输出生命周期：
+
+```text
+running -> completed
+running -> failed
+```
+
+即使 Agent 快照第一次出现某步骤时已经是 `completed`，框架也会先补发同一
+`step_id` 的 `running`。在最终 `message`、`human_action_required` 或流结束前，
+仍处于 `running` 的步骤会自动收口；前端应按 `step_id` 更新同一条步骤记录。
+
+插件只需为工具注册用户友好的标题和摘要：
+
+```python
+context.tools.register_step(
+    "inventory_query_stock",
+    "核对库存事实",
+    "正在核对商品库存和可用数量",
+)
+```
+
+多步骤任务也可以调用通用 `update_task_progress`，每项提供稳定的
+`id/title/status/summary`。这些内容是可展示的执行进度，不应包含隐藏推理、内部
+提示词、原始工具参数或思维链。
+
 ## 8. 自定义前端事件
 
 如果业务系统的前端确认格式不同，在插件内部注册投影：

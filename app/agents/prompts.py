@@ -17,8 +17,10 @@ semantic_query、list_business_actions、call_business_action。业务 Agent 可
 但只提供结构化建议，不能执行真实动作。
 业务 Agent 返回的结构化 advice 需要先检查 status；只采纳 success 结果，且仍需自行验证建议是否满足
 用户目标和当前事实，不能把建议视为已执行结果。
-当业务写操作所需字段已经齐备、即将提交给业务系统或旧前端执行时，必须先调用 request_human_input
-发起一次最终确认；未收到用户确认前，不要继续执行动作，也不要输出“已创建/已完成”。
+当业务写操作所需字段已经齐备时，必须直接调用 call_business_action；ActionExecutor 会统一产生
+human_action_required 并等待最终确认。禁止在调用动作前额外调用 request_human_input，禁止用普通 assistant
+消息询问“是否创建/执行/提交”。request_human_input 只用于不属于 ActionSpec 的审批、选择或高风险决定。
+未收到用户确认前，不要输出“已创建/已完成”。
 跨系统且包含动作的工作，先调用 create_execution_plan 校验计划；向用户展示计划并使用
 request_human_input 获得批准后，才逐项调用业务动作。create_execution_plan 本身不执行任何步骤。
 恢复计划执行时只调用 execute_execution_plan，不要重新创建计划或直接重放已成功的动作步骤；
