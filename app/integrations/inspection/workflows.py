@@ -286,7 +286,11 @@ def _query_plan_coverage_rows(
         datasource=datasource,
         question=(
             f"查询杆塔 device_guid 在 [{ '、'.join(device_guids) }] 中的所有航迹信息，"
-            "包含航迹guid、杆塔guid、线路guid、航迹文件、航迹版本和航迹内容"
+            "包含 id、route_guid、parent_device_guid、device_guid、device_type、route_description、"
+            "file_guid、file_type、route_type、route_version_type、route_source、"
+            "adapted_model、track_version、track_type、route_content、"
+            "description、upload_source、dept_code、create_user、create_time、"
+            "update_user、update_time、is_deleted、create_dept"
         ),
     )
     if route_result.get("status") != "success":
@@ -337,9 +341,8 @@ def _merge_tower_coverage(
     ]
     first_route = routes[0] if routes else {}
     route_fields = {
-        key: value
-        for key, value in first_route.items()
-        if key not in {"deviceGuid", "parentDeviceGuid"}
+        key: first_route.get(key)
+        for key in ("routeGuid", "routeContent", "routeDescription", "fileGuid", "fileType")
     }
     return {
         **tower,
@@ -361,14 +364,30 @@ def _merge_tower_coverage(
 
 def _map_route(row: dict[str, Any]) -> dict[str, Any]:
     return {
+        "id": _first_present(row, "id"),
+        "createUser": _first_present(row, "create_user", "createUser"),
+        "createTime": _first_present(row, "create_time", "createTime"),
+        "updateUser": _first_present(row, "update_user", "updateUser"),
+        "updateTime": _first_present(row, "update_time", "updateTime"),
+        "deptCode": _first_present(row, "dept_code", "deptCode"),
+        "isDeleted": _first_present(row, "is_deleted", "isDeleted"),
+        "createDept": _first_present(row, "create_dept", "createDept"),
         "routeGuid": _first_present(row, "route_guid", "routeGuid"),
         "parentDeviceGuid": _first_present(row, "parent_device_guid", "parentDeviceGuid"),
         "deviceGuid": _first_present(row, "device_guid", "deviceGuid"),
         "routeDescription": _first_present(row, "route_description", "routeDescription"),
+        "description": _first_present(row, "description"),
         "fileGuid": _first_present(row, "file_guid", "fileGuid"),
-        "fileType": _first_present(row, "file_type", "fileType"),
+        "routeVersionType": _first_present(row, "route_version_type", "routeVersionType"),
+        "routeType": _first_present(row, "route_type", "routeType"),
+        "deviceType": _first_present(row, "device_type", "deviceType"),
+        "routeSource": _first_present(row, "route_source", "routeSource"),
+        "adaptedModel": _first_present(row, "adapted_model", "adaptedModel"),
         "trackVersion": _first_present(row, "track_version", "trackVersion"),
+        "trackType": _first_present(row, "track_type", "trackType"),
         "routeContent": _first_present(row, "route_content", "routeContent"),
+        "fileType": _first_present(row, "file_type", "fileType"),
+        "uploadSource": _first_present(row, "upload_source", "uploadSource"),
     }
 
 

@@ -707,9 +707,30 @@ def test_inspection_plan_coverage_rebuilds_legacy_tower_route_airport_chain(
                 ]
             elif "所有航迹信息" in question:
                 rows = [{
+                    "id": 101,
+                    "create_user": "creator-1",
+                    "create_time": "2026-08-01 10:00:00",
+                    "update_user": "updater-1",
+                    "update_time": "2026-08-02 11:00:00",
+                    "dept_code": "001",
+                    "is_deleted": 0,
+                    "create_dept": "dept-1",
                     "device_guid": "tower-1",
+                    "parent_device_guid": "line-1",
                     "route_guid": "route-1",
+                    "route_description": "主航线",
+                    "description": "1号杆塔航迹",
                     "file_guid": "file-1",
+                    "route_version_type": "formal",
+                    "route_type": "tower",
+                    "device_type": "dms",
+                    "route_source": "platform",
+                    "adapted_model": "M350",
+                    "track_version": "3",
+                    "track_type": "fine",
+                    "route_content": "route-content-1",
+                    "file_type": "json",
+                    "upload_source": "system",
                 }]
             else:
                 rows = [{
@@ -737,9 +758,35 @@ def test_inspection_plan_coverage_rebuilds_legacy_tower_route_airport_chain(
     assert result["uncoveredCount"] == 1
     assert result["coveredRows"][0]["deviceGuid"] == "tower-1"
     assert result["coveredRows"][0]["parentDeviceGuid"] == "line-1"
-    assert result["coveredRows"][0]["deviceRouteList"][0]["parentDeviceGuid"] == "line-1"
+    assert result["coveredRows"][0]["deviceRouteList"] == [{
+        "id": 101,
+        "createUser": "creator-1",
+        "createTime": "2026-08-01 10:00:00",
+        "updateUser": "updater-1",
+        "updateTime": "2026-08-02 11:00:00",
+        "deptCode": "001",
+        "isDeleted": 0,
+        "createDept": "dept-1",
+        "routeGuid": "route-1",
+        "parentDeviceGuid": "line-1",
+        "deviceGuid": "tower-1",
+        "routeDescription": "主航线",
+        "description": "1号杆塔航迹",
+        "fileGuid": "file-1",
+        "routeVersionType": "formal",
+        "routeType": "tower",
+        "deviceType": "dms",
+        "routeSource": "platform",
+        "adaptedModel": "M350",
+        "trackVersion": "3",
+        "trackType": "fine",
+        "routeContent": "route-content-1",
+        "fileType": "json",
+        "uploadSource": "system",
+    }]
     assert result["coveredRows"][0]["dockGuid"] == "dock-1"
     assert result["coveredRows"][0]["routeGuid"] == "route-1"
+    assert "createUser" not in result["coveredRows"][0]
     assert result["uncoveredRows"][0]["deviceGuid"] == "tower-2"
     assert len(questions) == 3
 
