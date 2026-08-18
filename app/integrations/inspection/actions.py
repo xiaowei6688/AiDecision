@@ -79,7 +79,10 @@ FLY_WORK_ORDER = ActionSpec(
     input_model=FlyInspectionWorkOrderInput,
     executor=ActionExecutorSpec(adapter="inspection", method="fly_work_order"),
     intent_examples=["一键起飞", "执行巡检工单", "启动无人机巡检任务"],
-    confirmation=ActionConfirmation(required=True),
+    confirmation=ActionConfirmation(
+        required=True,
+        template="确认执行业务动作：固定机场工单“{{work_order_no}}”一键起飞？",
+    ),
     risk_level="high",
     success_template="巡检工单起飞操作已提交",
 )

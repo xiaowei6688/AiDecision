@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.actions.policy import PolicyEngine
+from app.actions.executor import BusinessActionExecutor
+from app.actions.registry import ActionRegistry
 from app.actions.schemas import ActionExecutionContext
 from app.integrations.inspection.actions import CREATE_PLAN, CREATE_WORK_ORDER, FLY_WORK_ORDER
 from app.integrations.inspection.allcore_auth import InspectionAllCoreAuthClient
@@ -42,9 +44,21 @@ def test_inspection_actions_are_confirmed_writes() -> None:
     assert CREATE_PLAN.confirmation.required
     assert CREATE_WORK_ORDER.confirmation.required
     assert FLY_WORK_ORDER.confirmation.required
+    assert FLY_WORK_ORDER.confirmation.template == "确认执行业务动作：固定机场工单“{{work_order_no}}”一键起飞？"
     assert CREATE_WORK_ORDER.executor.adapter == "inspection"
     assert CREATE_PLAN.pre_checks == ["inspection.valid_time_window"]
     assert CREATE_WORK_ORDER.pre_checks == []
+
+
+def test_inspection_fly_confirmation_renders_real_work_order_number() -> None:
+    executor = BusinessActionExecutor(ActionRegistry(), PolicyEngine())
+
+    message = executor._confirmation_message(
+        FLY_WORK_ORDER,
+        {"work_order_no": "AL-20260818-001"},
+    )
+
+    assert message == "确认执行业务动作：固定机场工单“AL-20260818-001”一键起飞？"
 
 
 def test_inspection_fly_confirmation_uses_legacy_frontend_contract() -> None:
