@@ -587,7 +587,7 @@ def test_legacy_create_plan_action_result_finishes_with_created_plan_id() -> Non
     }
 
 
-def test_inspection_plan_plain_resume_does_not_fake_action_result() -> None:
+def test_inspection_plan_plain_resume_completes_without_action_result() -> None:
     projected = inspection_frontend_callback_resume_projection(
         {
             "action_id": "inspection.create_plan",
@@ -596,8 +596,9 @@ def test_inspection_plan_plain_resume_does_not_fake_action_result() -> None:
         {"action": "approve", "content": "确认", "data": {}},
     )
 
-    assert projected["status"] == "failed"
-    assert projected["error_code"] == "ACTION_RESULT_REQUIRED"
+    assert projected["status"] == "success"
+    assert projected["data"]["final"] is True
+    assert "ACTION_RESULT_REQUIRED" not in projected
 
 
 def test_inspection_work_order_approve_waits_for_action_result() -> None:
