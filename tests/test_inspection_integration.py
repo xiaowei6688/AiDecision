@@ -6,7 +6,7 @@ import pytest
 
 from app.actions.policy import PolicyEngine
 from app.actions.schemas import ActionExecutionContext
-from app.integrations.inspection.actions import CREATE_PLAN, CREATE_WORK_ORDER
+from app.integrations.inspection.actions import CREATE_PLAN, CREATE_WORK_ORDER, FLY_WORK_ORDER
 from app.integrations.inspection.allcore_auth import InspectionAllCoreAuthClient
 from app.integrations.inspection.notifications import (
     InspectionNotificationRequest,
@@ -41,9 +41,88 @@ from app.integrations.projections import ProjectionRegistry
 def test_inspection_actions_are_confirmed_writes() -> None:
     assert CREATE_PLAN.confirmation.required
     assert CREATE_WORK_ORDER.confirmation.required
+    assert FLY_WORK_ORDER.confirmation.required
     assert CREATE_WORK_ORDER.executor.adapter == "inspection"
     assert CREATE_PLAN.pre_checks == ["inspection.valid_time_window"]
     assert CREATE_WORK_ORDER.pre_checks == []
+
+
+def test_inspection_fly_confirmation_uses_legacy_frontend_contract() -> None:
+    result = ActionResult(
+        status="requires_confirmation",
+        action_id="inspection.fly_work_order",
+        message="confirm",
+        data={
+            "action": {"title": "巡检工单一键起飞"},
+            "params": {
+                "ids": ["order-1"],
+                "workOrderNo": "AL-001",
+                "finalSummary": "全部工单已创建完成。",
+            },
+            "confirmation_token": "token-1",
+        },
+    )
+
+    projected = inspection_action_result_projection(result)
+
+    assert projected["actionCode"] == "flyWorkOrder"
+    assert projected["executeApi"] == "/order/fly"
+    assert projected["executePayload"] == {"ids": ["order-1"]}
+    assert projected["question"] == "是否对固定机场巡检工单执行一键起飞？"
+    assert projected["pre_message"] == "全部工单已创建完成。"
+
+
+def test_inspection_fly_action_result_accepts_ready_status() -> None:
+    request = inspection_action_result_to_resume(WebSocketClientEvent.model_validate({
+        "type": "actionResult",
+        "session_id": "session-1",
+        "action_code": "flyWorkOrder",
+        "action_result": {
+            "data": {
+                "code": 200,
+                "data": {
+                    "overallStatus": "ready",
+                    "summary": "所有机巢状态正常，预计30秒内自动起飞",
+                },
+            },
+        },
+    }))
+
+    assert request is not None
+    assert request.action == "approve"
+    assert request.data["actionCode"] == "flyWorkOrder"
+    assert request.data["success"] is True
+    assert "businessContinuation" not in request.data
+
+
+def test_inspection_fly_result_binds_work_order_to_runtime_session() -> None:
+    from app.integrations.inspection.bindings import inspection_session_bindings
+
+    token = set_runtime_context(RequestRuntimeContext(session_id="session-fly", metadata={}))
+    try:
+        projected = inspection_frontend_callback_resume_projection(
+            {
+                "action_id": "inspection.fly_work_order",
+                "executePayload": {"ids": ["order-fly"]},
+            },
+            {
+                "action": "approve",
+                "data": {
+                    "actionCode": "flyWorkOrder",
+                    "success": True,
+                    "businessResult": {
+                        "code": 200,
+                        "data": {"overallStatus": "ready", "summary": "准备起飞"},
+                    },
+                },
+            },
+        )
+    finally:
+        reset_runtime_context(token)
+
+    assert projected["status"] == "success"
+    assert projected["message"] == "准备起飞"
+    assert inspection_session_bindings.session_for_work_order("order-fly") == "session-fly"
 
 
 def test_inspection_registers_user_friendly_tool_steps() -> None:
@@ -132,9 +211,11 @@ async def test_inspection_work_order_continuation_uses_real_records_for_final_su
     )
 
     assert direct is not None
-    assert direct.model_dump()["kind"] == "message"
-    assert "AL-20260818-001" in direct.model_dump()["message"]
-    assert "AL-20260818-002" in direct.model_dump()["message"]
+    assert direct.model_dump()["kind"] == "action"
+    assert direct.model_dump()["action_id"] == "inspection.fly_work_order"
+    assert direct.model_dump()["params"]["ids"] == ["order-1"]
+    assert "AL-20260818-001" in direct.model_dump()["params"]["finalSummary"]
+    assert "AL-20260818-002" in direct.model_dump()["params"]["finalSummary"]
     assert calls == [
         "inspection_query_work_order_detail",
         "inspection_query_coverage",

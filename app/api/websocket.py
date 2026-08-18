@@ -42,6 +42,7 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
 
 
 async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) -> None:
+    connection = None
     try:
         auth = authenticate_websocket(websocket, websocket.app.state.settings)
         access = websocket.app.state.session_access
@@ -53,6 +54,9 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
         await websocket.close(code=1008, reason=str(exc))
         return
     await websocket.accept()
+    push_manager = websocket.app.state.websocket_push_manager
+    connection = push_manager.register(websocket)
+    push_manager.bind_session(connection, session_id)
     session_service: SessionService = websocket.app.state.session_service
 
     await _send(
@@ -80,6 +84,7 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
             except PermissionError as exc:
                 await _send_error(websocket, event_session_id, "session_not_found", str(exc))
                 continue
+            push_manager.bind_session(connection, event_session_id)
 
             if client_event.type == ClientEventType.PING:
                 await _send(
@@ -151,16 +156,22 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
     except Exception as exc:  # pragma: no cover - defensive API boundary
         logger.exception("WebSocket chat failed: session_id=%s", session_id)
         await _send_error(websocket, session_id, "server_error", str(exc))
+    finally:
+        if connection is not None:
+            push_manager.unregister(connection)
 
 
 async def _send(websocket: WebSocket, event: WebSocketServerEvent) -> None:
-    await websocket.send_json(event.model_dump(mode="json"))
+    await websocket.app.state.websocket_push_manager.send_raw(
+        websocket,
+        event.model_dump(mode="json"),
+    )
 
 
 async def _send_event(websocket: WebSocket, event: dict[str, object]) -> None:
     if event.get("type") == ServerEventType.DST_STATE.value:
         return
-    await websocket.send_json(event)
+    await websocket.app.state.websocket_push_manager.send_raw(websocket, event)
 
 
 async def _send_error(

@@ -228,16 +228,13 @@ def test_inspection_work_orders_are_split_and_advanced_one_group_at_a_time() -> 
     direct = inspection_work_order_direct_action(completed)
     assert direct is not None
     assert direct.model_dump() == {
-        "kind": "message",
-        "message": completed["finalSummary"],
-        "data": {
-            "status": "COMPLETED",
-            "summary": "该计划的巡检工单已全部创建完成。",
-            "workOrderCount": 2,
-            "towerCount": 2,
-            "planName": "临时计划-白路线巡检",
+        "kind": "action",
+        "action_id": "inspection.fly_work_order",
+        "params": {
+            "ids": ["order-covered"],
+            "workOrderNo": "AL-20260818-001",
+            "finalSummary": completed["finalSummary"],
         },
-        "status": "success",
     }
 
 
@@ -262,3 +259,83 @@ def test_inspection_uncovered_work_order_requires_real_resources() -> None:
     assert state["status"] == "NEED_MORE_INFO"
     assert state["missingFields"] == ["equipSn", "flightWorkers"]
     assert state["executePayload"] is None
+
+
+def test_completed_drone_only_work_orders_do_not_offer_dock_takeoff() -> None:
+    completed = inspection_build_work_order_fill_state.invoke({
+        "plan": {
+            "planGuid": "plan-1",
+            "planName": "临时计划-线路巡检",
+            "planType": "5",
+            "inspectStartTime": "2026-08-18 00:00:00",
+            "inspectEndTime": "2026-08-18 23:59:59",
+        },
+        "coverage_rows": [{
+            "deviceGuid": "tower-1",
+            "parentDeviceGuid": "line-1",
+            "major": "dms",
+        }],
+        "completed_groups": ["uncovered"],
+        "created_work_orders": [{
+            "id": "order-1",
+            "work_order_no": "AL-001",
+            "inspection_method": "drone",
+        }],
+    })
+
+    direct = inspection_work_order_direct_action(completed)
+
+    assert direct is not None
+    assert direct.model_dump()["kind"] == "message"
+
+
+def test_completed_legacy_dock_record_offers_takeoff() -> None:
+    result = {
+        "ok": True,
+        "workOrderFillState": {"status": "COMPLETED"},
+        "finalSummary": "全部工单已创建完成。",
+        "createdWorkOrders": [{
+            "work_order_id": "order-dock",
+            "work_order_no": "AL-DOCK-001",
+            "inspection_method": "固定机场",
+        }],
+    }
+
+    direct = inspection_work_order_direct_action(result)
+
+    assert direct is not None
+    assert direct.model_dump()["action_id"] == "inspection.fly_work_order"
+    assert direct.model_dump()["params"]["ids"] == ["order-dock"]
+
+
+def test_completed_split_work_orders_selects_legacy_airport_order_for_takeoff() -> None:
+    result = {
+        "ok": True,
+        "workOrderFillState": {"status": "COMPLETED"},
+        "finalSummary": "已成功创建全部巡检工单。",
+        "createdWorkOrders": [
+            {
+                "work_order_id": "covered-order",
+                "work_order_no": "AL-COVERED",
+                "inspection_method": "fixed_airport_inspection",
+            },
+            {
+                "work_order_id": "uncovered-order",
+                "work_order_no": "AL-UNCOVERED",
+                "inspection_method": "drone",
+            },
+        ],
+    }
+
+    direct = inspection_work_order_direct_action(result)
+
+    assert direct is not None
+    assert direct.model_dump() == {
+        "kind": "action",
+        "action_id": "inspection.fly_work_order",
+        "params": {
+            "ids": ["covered-order"],
+            "workOrderNo": "AL-COVERED",
+            "finalSummary": "已成功创建全部巡检工单。",
+        },
+    }

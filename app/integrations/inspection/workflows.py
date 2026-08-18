@@ -557,6 +557,7 @@ def inspection_build_work_order_fill_state(
             "workOrderCount": work_order_count,
             "towerCount": tower_count,
             "planName": plan_name,
+            "createdWorkOrders": normalized_created_work_orders,
         }
 
     details = [_row_to_detail(row) for row in grouped_rows[selected_group]]

@@ -92,6 +92,7 @@ async def inspection_continuation(
     )
     if isinstance(fill, DirectMessageResult):
         return fill
+    fill = _with_created_work_orders(fill, created_work_orders)
     direct = inspection_work_order_direct_action(fill)
     if direct is not None:
         return direct
@@ -117,6 +118,7 @@ async def inspection_continuation(
     )
     if isinstance(fill, DirectMessageResult):
         return fill
+    fill = _with_created_work_orders(fill, created_work_orders)
     direct = inspection_work_order_direct_action(fill)
     return direct if direct is not None else _failure(_next_question(fill))
 
@@ -147,6 +149,21 @@ def _next_question(value: Any) -> str:
         if isinstance(state, dict) and isinstance(state.get("nextQuestion"), str):
             return state["nextQuestion"]
     return "巡检工单数据尚未准备完成。"
+
+
+def _with_created_work_orders(
+    fill: dict[str, Any],
+    created_work_orders: list[dict[str, Any]],
+) -> dict[str, Any]:
+    state = fill.get("workOrderFillState")
+    if (
+        isinstance(state, dict)
+        and state.get("status") == "COMPLETED"
+        and created_work_orders
+    ):
+        # 最终起飞确认使用查询到的真实工单，不能只依赖总结文本。
+        return {**fill, "createdWorkOrders": created_work_orders}
+    return fill
 
 
 def _failure(message: str) -> DirectMessageResult:

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 from fastapi import APIRouter
 
-from app.integrations.inspection.actions import CREATE_PLAN, CREATE_WORK_ORDER
+from app.integrations.inspection.actions import CREATE_PLAN, CREATE_WORK_ORDER, FLY_WORK_ORDER
 from app.integrations.inspection.adapter import InspectionAdapter
 from app.integrations.inspection.agent import inspection_agent
 from app.integrations.inspection.checks import valid_time_window
@@ -36,6 +36,7 @@ from app.integrations.context import PluginContext
 def register_inspection_actions(context: PluginContext) -> None:
     context.action_registry.register(CREATE_PLAN)
     context.action_registry.register(CREATE_WORK_ORDER)
+    context.action_registry.register(FLY_WORK_ORDER)
     context.action_executor.register_adapter("inspection", InspectionAdapter())
     context.policy_engine.register_pre_check("inspection.valid_time_window", valid_time_window)
 

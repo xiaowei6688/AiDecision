@@ -84,6 +84,14 @@ class CreateInspectionWorkOrderInput(BaseModel):
         return self
 
 
+class FlyInspectionWorkOrderInput(BaseModel):
+    ids: list[str | int] = Field(min_length=1)
+    work_order_no: str | None = Field(default=None, alias="workOrderNo")
+    final_summary: str | None = Field(default=None, alias="finalSummary")
+
+    model_config = {"populate_by_name": True}
+
+
 def normalize_plan_object(item: dict[str, Any]) -> dict[str, Any]:
     return {
         "deviceGuid": _first_present(item, "tower_guid", "tower_uid", "deviceGuid", "towerGuid", "杆塔uid"),

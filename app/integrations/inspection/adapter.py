@@ -37,6 +37,12 @@ _FRONTEND_ACTIONS = {
         "executeApi": "/order/createTempOrder",
         "executeMethod": "POST",
     },
+    "fly_work_order": {
+        "actionCode": "flyWorkOrder",
+        "routePath": "/workOrder/review",
+        "executeApi": "/order/fly",
+        "executeMethod": "POST",
+    },
 }
 
 
@@ -66,4 +72,8 @@ _API_FIELD_NAMES = {
 def _to_api_payload(params: dict[str, Any]) -> dict[str, Any]:
     """Translate normalized Pydantic names to the legacy inspection API contract."""
 
-    return {_API_FIELD_NAMES.get(key, key): value for key, value in params.items()}
+    return {
+        _API_FIELD_NAMES.get(key, key): value
+        for key, value in params.items()
+        if key not in {"final_summary", "finalSummary"}
+    }

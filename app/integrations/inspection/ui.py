@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from app.actions.schemas import ActionResult
+from app.core.runtime_context import get_runtime_context
+from app.integrations.inspection.bindings import inspection_session_bindings
 
 
 def inspection_action_result_projection(result: ActionResult) -> dict[str, object]:
@@ -25,10 +27,18 @@ def inspection_action_result_projection(result: ActionResult) -> dict[str, objec
         route_path = "/workOrder/review"
         execute_api = "/order/createTempOrder"
         question = "请确认是否创建以下巡检工单"
+    elif action_id == "inspection.fly_work_order":
+        action_code = "flyWorkOrder"
+        route_path = "/workOrder/review"
+        execute_api = "/order/fly"
+        final_summary = params.get("final_summary") or params.get("finalSummary")
+        question = "是否对固定机场巡检工单执行一键起飞？"
     else:
         return {}
     execute_payload = _legacy_payload(params)
-    return {
+    if action_id == "inspection.fly_work_order":
+        execute_payload = {"ids": execute_payload.get("ids", [])}
+    projection = {
         "question": question,
         "businessId": "inspection",
         "actionCode": action_code,
@@ -40,6 +50,9 @@ def inspection_action_result_projection(result: ActionResult) -> dict[str, objec
         "confirmation_token": result.data.get("confirmation_token"),
         "displayFields": _display_fields(action_id, execute_payload),
     }
+    if action_id == "inspection.fly_work_order" and isinstance(final_summary, str):
+        projection["pre_message"] = final_summary
+    return projection
 
 
 def inspection_human_interrupt_projection(interrupts: list[object]) -> dict[str, object]:
@@ -67,7 +80,8 @@ def inspection_frontend_callback_resume_projection(
 ) -> dict[str, object]:
     action_id = pending_payload.get("action_id")
     if action_id not in {"inspection.create_plan", "inspection.create_work_order"}:
-        return {}
+        if action_id != "inspection.fly_work_order":
+            return {}
     if not isinstance(resume_value, dict):
         return {}
 
@@ -76,6 +90,48 @@ def inspection_frontend_callback_resume_projection(
         return {}
 
     data = resume_value.get("data") if isinstance(resume_value.get("data"), dict) else {}
+    if action_id == "inspection.fly_work_order":
+        action_result_code = _first_non_empty(data, "actionCode", "action_code")
+        if action_result_code not in {None, "flyWorkOrder"}:
+            return {
+                "status": "failed",
+                "message": "巡检工单起飞结果需要通过 flyWorkOrder actionResult 回传。",
+                "error_code": "ACTION_RESULT_REQUIRED",
+                "data": {"pendingAction": pending_payload, "frontendResult": data, "final": False},
+            }
+        if action_result_code is None:
+            return {
+                "status": "updated",
+                "message": "已确认起飞，请前端完成 /order/fly 后回传 actionResult。",
+                "data": {"pendingAction": pending_payload, "frontendResult": data, "final": False},
+            }
+        business_result = data.get("businessResult") if isinstance(data.get("businessResult"), dict) else {}
+        fly_payload = business_result.get("data") if isinstance(business_result.get("data"), dict) else {}
+        message = (
+            data.get("message")
+            or resume_value.get("content")
+            or business_result.get("msg")
+            or fly_payload.get("summary")
+            or "无人机起飞操作已提交。"
+        )
+        if data.get("success") is not False:
+            execute_payload = pending_payload.get("executePayload")
+            execute_payload = execute_payload if isinstance(execute_payload, dict) else {}
+            work_order_ids = execute_payload.get("ids")
+            session_id = get_runtime_context().session_id
+            if session_id and isinstance(work_order_ids, list):
+                for work_order_id in work_order_ids:
+                    if work_order_id not in (None, ""):
+                        inspection_session_bindings.bind_work_order(work_order_id, session_id)
+        return {
+            "status": "success" if data.get("success") is not False else "failed",
+            "message": message,
+            "data": {
+                "pendingAction": pending_payload,
+                "frontendResult": data,
+                "final": True,
+            },
+        }
     if action_id == "inspection.create_plan":
         # 计划确认只表示用户同意执行；旧版不会要求 Agent 接收计划回执。
         action_result_code = _first_non_empty(data, "actionCode", "action_code")
@@ -179,6 +235,12 @@ def _display_fields(action_id: str, params: dict[str, Any]) -> dict[str, Any]:
                 for item in params.get("plan_object_list", params.get("planObjectList", []))
                 if isinstance(item, dict) and (item.get("deviceName") or item.get("device_name"))
             ],
+        }
+    if action_id == "inspection.fly_work_order":
+        ids = params.get("ids") if isinstance(params.get("ids"), list) else []
+        return {
+            "workOrderId": ids[0] if ids else None,
+            "workOrderNo": params.get("workOrderNo") or params.get("work_order_no"),
         }
     return {
         "planGuid": params.get("plan_guid", params.get("planGuid")),

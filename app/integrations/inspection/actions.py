@@ -9,6 +9,7 @@ from app.actions.schemas import (
 from app.integrations.inspection.models import (
     CreateInspectionPlanInput,
     CreateInspectionWorkOrderInput,
+    FlyInspectionWorkOrderInput,
 )
 
 
@@ -62,4 +63,23 @@ CREATE_WORK_ORDER = ActionSpec(
     confirmation=ActionConfirmation(required=True),
     risk_level="high",
     success_template="巡检工单已创建：{id}",
+)
+
+
+FLY_WORK_ORDER = ActionSpec(
+    action_id="inspection.fly_work_order",
+    title="巡检工单一键起飞",
+    description="对已创建并校验成功的固定机场巡检工单执行一键起飞。",
+    system="inspection",
+    inputs=[
+        ActionInputSpec("ids", type="array", description="固定机场巡检工单 ID 列表"),
+        ActionInputSpec("workOrderNo", description="用于确认界面展示的工单编号", required=False),
+        ActionInputSpec("finalSummary", description="已创建工单的真实汇总，仅用于确认界面展示", required=False),
+    ],
+    input_model=FlyInspectionWorkOrderInput,
+    executor=ActionExecutorSpec(adapter="inspection", method="fly_work_order"),
+    intent_examples=["一键起飞", "执行巡检工单", "启动无人机巡检任务"],
+    confirmation=ActionConfirmation(required=True),
+    risk_level="high",
+    success_template="巡检工单起飞操作已提交",
 )

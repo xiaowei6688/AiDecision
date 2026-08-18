@@ -14,6 +14,7 @@ from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.services.context_compressor import ContextCompressor
 from app.services.session_service import SessionService
+from app.services.websocket_push import WebSocketPushManager
 from app.domain.plan_store import default_plan_store
 from app.integrations.context import PluginContext
 
@@ -78,6 +79,7 @@ def create_app(
     )
     app.state.settings = runtime_settings
     app.state.plugin_context = plugin_context
+    app.state.websocket_push_manager = WebSocketPushManager()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=runtime_settings.allowed_origins,

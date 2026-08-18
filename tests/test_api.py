@@ -338,3 +338,118 @@ def test_single_connection_routes_to_the_client_selected_session() -> None:
     assert message["session_id"] == session_id
     assert message["request_id"] == "request-1"
     assert message["parent_message_id"] == "message-1"
+
+
+def test_inspection_notifications_push_to_the_bound_websocket_session() -> None:
+    app = create_app(
+        settings=Settings(
+            _env_file=None,
+            auth_enabled=False,
+            enabled_integrations=["inspection"],
+        ),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/chat/demo") as websocket:
+            websocket.receive_json()
+            response = client.post(
+                "/integrations/inspection/notify",
+                json={
+                    "type": "startFlying",
+                    "content": {
+                        "workOrderId": "order-1",
+                        "workOrderNo": "AL-001",
+                        "dockSn": "dock-1",
+                        "droneSn": "drone-1",
+                        "relationSessionId": "demo",
+                    },
+                },
+            )
+            event = websocket.receive_json()
+
+    assert response.status_code == 200
+    assert response.json()["delivered"] == 1
+    assert event["type"] == "human_action_required"
+    assert event["session_id"] == "demo"
+    assert event["data"]["interrupts"][0]["actionCode"] == "flightMonitoring"
+
+
+def test_inspection_defect_notification_keeps_real_counts() -> None:
+    app = create_app(
+        settings=Settings(
+            _env_file=None,
+            auth_enabled=False,
+            enabled_integrations=["inspection"],
+        ),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/chat/demo") as websocket:
+            websocket.receive_json()
+            response = client.post(
+                "/integrations/inspection/notify",
+                json={
+                    "type": "recognizeCompleted",
+                    "content": {
+                        "workOrderId": "order-1",
+                        "workOrderNo": "AL-001",
+                        "recognitionTaskGuid": "task-1",
+                        "taskName": "白路线缺陷识别任务",
+                        "relationSessionId": "demo",
+                        "totalPictures": 20,
+                        "defectPictures": 4,
+                        "totalDefects": 5,
+                        "normalDefects": 3,
+                        "seriousDefects": 1,
+                        "criticalDefects": 1,
+                    },
+                },
+            )
+            event = websocket.receive_json()
+
+    assert response.status_code == 200
+    assert response.json()["delivered"] == 1
+    assert "共识别缺陷 5 处" in event["content"]
+    assert "严重缺陷：1 处" in event["content"]
+    action = event["data"]["interrupts"][0]
+    assert action["actionCode"] == "openRecognitionTask"
+    assert action["executePayload"] == {
+        "recognitionTaskGuid": "task-1",
+        "workOrderNo": "AL-001",
+    }
+
+
+def test_start_flying_notification_resolves_session_from_work_order_binding() -> None:
+    from app.integrations.inspection.bindings import inspection_session_bindings
+
+    inspection_session_bindings.bind_work_order("order-bound", "demo")
+    app = create_app(
+        settings=Settings(
+            _env_file=None,
+            auth_enabled=False,
+            enabled_integrations=["inspection"],
+        ),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/chat/demo") as websocket:
+            websocket.receive_json()
+            response = client.post(
+                "/integrations/inspection/notify",
+                json={
+                    "type": "startFlying",
+                    "content": {
+                        "workOrderId": "order-bound",
+                        "workOrderNo": "AL-BOUND",
+                        "dockSn": "dock-1",
+                        "droneSn": "drone-1",
+                    },
+                },
+            )
+            event = websocket.receive_json()
+
+    assert response.json()["delivered"] == 1
+    assert event["session_id"] == "demo"

@@ -297,8 +297,36 @@ class SessionService(SessionEventProjection):
                 "session_id": session_id,
                 "data": self._jsonable(event),
             }
-        passthrough = [] if normalized.get("type") == ServerEventType.DST_STATE.value else [normalized]
+        passthrough = self._pre_message_events(session_id, normalized)
         return [*tool_events, *progress_events, *passthrough]
+
+    def _pre_message_events(
+        self,
+        session_id: str,
+        event: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """将插件声明的前置提示按普通消息、确认事件的顺序发送。"""
+
+        if event.get("type") == ServerEventType.DST_STATE.value:
+            return []
+        if event.get("type") != ServerEventType.HUMAN_ACTION_REQUIRED.value:
+            return [event]
+        data = event.get("data")
+        data = data if isinstance(data, dict) else {}
+        pre_message = data.get("pre_message")
+        if not isinstance(pre_message, str) or not pre_message.strip():
+            return [event]
+        confirmation_data = dict(data)
+        confirmation_data.pop("pre_message", None)
+        return [
+            {
+                "type": ServerEventType.MESSAGE.value,
+                "session_id": session_id,
+                "content": pre_message.strip(),
+                "data": {"source": "pre_message"},
+            },
+            {**event, "data": confirmation_data},
+        ]
 
     def _event_has_display_tool_calls(self, event: Any) -> bool:
         for messages in self._message_sequences(event):

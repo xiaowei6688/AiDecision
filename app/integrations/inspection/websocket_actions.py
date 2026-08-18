@@ -9,6 +9,7 @@ from app.schemas.chat import HumanResumeRequest, WebSocketClientEvent
 
 PLAN_ACTION_CODES = {"createPlan", "inspection.create_plan", "create_plan"}
 WORK_ORDER_ACTION_CODES = {"createTempOrder", "inspection.create_work_order", "create_work_order"}
+FLY_ACTION_CODES = {"flyWorkOrder", "inspection.fly_work_order", "fly_work_order"}
 
 
 def inspection_action_result_to_resume(
@@ -22,12 +23,17 @@ def inspection_action_result_to_resume(
     elif action_code in WORK_ORDER_ACTION_CODES:
         normalized_code = "createTempOrder"
         result_id_name = "workOrderId"
+    elif action_code in FLY_ACTION_CODES:
+        normalized_code = "flyWorkOrder"
+        result_id_name = "workOrderId"
     else:
         return None
 
     business_result = action_result.get("data")
     business_result = business_result if isinstance(business_result, dict) else {}
     success = _is_success(action_result, business_result)
+    if normalized_code == "flyWorkOrder":
+        success = _is_fly_success(action_result, business_result)
     result_id = _result_id(business_result.get("data"), result_id_name)
     message = (
         action_result.get("message")
@@ -44,7 +50,7 @@ def inspection_action_result_to_resume(
     }
     if result_id not in (None, ""):
         data[result_id_name] = str(result_id)
-    if success and result_id not in (None, ""):
+    if success and result_id not in (None, "") and normalized_code != "flyWorkOrder":
         data["businessContinuation"] = {
             "businessId": "inspection",
             "operation": (
@@ -78,6 +84,15 @@ def _is_success(
     if "success" in action_result:
         return _as_bool(action_result["success"])
     return action_result.get("status") == "success"
+
+
+def _is_fly_success(action_result: dict[str, Any], business_result: dict[str, Any]) -> bool:
+    if str(business_result.get("code", "")) != "200":
+        return False
+    payload = business_result.get("data")
+    if not isinstance(payload, dict):
+        return True
+    return payload.get("overallStatus") in {None, "ready", "partial"}
 
 
 def _result_id(value: Any, field_name: str) -> Any:
