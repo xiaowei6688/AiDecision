@@ -187,6 +187,12 @@ def inspection_build_plan_fill_state(
     return {
         "ok": True,
         "executePayload": payload,
+        "_framework": {
+            "direct_action": {
+                "action_id": "inspection.create_plan",
+                "params": payload,
+            }
+        },
         "displayFields": {
             "planName": payload["planName"],
             "planType": PLAN_TYPES[payload["planType"]],

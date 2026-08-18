@@ -229,6 +229,26 @@ def test_inspection_plan_accepts_temporary_inspection_type_aliases(
     assert result["displayFields"]["planType"] == "临时计划"
 
 
+def test_inspection_plan_fill_state_directly_routes_large_payload_to_action() -> None:
+    result = inspection_build_plan_fill_state.invoke({
+        "plan_type": "5",
+        "inspect_start_time": "2026-08-18 08:00:00",
+        "inspect_end_time": "2026-08-18 10:00:00",
+        "plan_object_list": [{
+            "deviceGuid": "tower-1",
+            "deviceName": "10kV白路线#1",
+            "major": "dms",
+            "parentDeviceGuid": "line-1",
+            "parentDeviceName": "10kV白路线",
+        }],
+    })
+
+    assert result["_framework"]["direct_action"] == {
+        "action_id": "inspection.create_plan",
+        "params": result["executePayload"],
+    }
+
+
 def test_inspection_plan_fill_state_is_stable_when_action_validates_again(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
