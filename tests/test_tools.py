@@ -26,7 +26,7 @@ from app.core.runtime_context import RequestRuntimeContext, reset_runtime_contex
 from app.core.progress import ProgressChannel, reset_progress_channel, set_progress_channel
 from app.tools.broker import ToolBrokerRequest
 from app.tools.dynamic_tools import _tool_audit_progress
-from app.integrations.direct_results import DirectActionResult
+from app.integrations.direct_results import DirectActionResult, DirectMessageResult
 
 
 class _FakeModel:
@@ -300,21 +300,15 @@ def test_dynamic_tools_include_business_agent_consultation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_business_continuation_routes_directly_from_runtime_metadata() -> None:
+async def test_business_continuation_routes_registered_handler_from_runtime_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class ContinuationModel:
         def bind_tools(self, tools: list[object]) -> "ContinuationModel":
             return self
 
         async def ainvoke(self, messages: list[object]) -> AIMessage:
-            return AIMessage(content=json.dumps({
-                "facts_and_constraints": ["已收到计划创建成功回执"],
-                "assumptions": [],
-                "recommended_queries": [],
-                "recommended_actions": [],
-                "dependencies": [],
-                "risks": [],
-                "missing_information": [],
-            }, ensure_ascii=False))
+            raise AssertionError("registered continuation must not call the model")
 
     context = PluginContext()
     IntegrationManager(["inspection"]).register_context(context)
@@ -328,6 +322,10 @@ async def test_business_continuation_routes_directly_from_runtime_metadata() -> 
         for item in build_agent_tools(ContinuationModel(), plugin_context=context)
         if item.name == "continue_business_workflow"
     )
+    async def direct_handler(*_args: object) -> DirectMessageResult:
+        return DirectMessageResult("来自真实业务查询的结果")
+
+    monkeypatch.setattr(context.continuations, "dispatch", direct_handler)
     token = set_runtime_context(RequestRuntimeContext(
         session_id="session-1",
         metadata={"business_continuation": continuation},
@@ -340,11 +338,14 @@ async def test_business_continuation_routes_directly_from_runtime_metadata() -> 
 
     assert result["status"] == "success"
     assert result["business_id"] == "inspection"
-    assert result["advice"]["facts_and_constraints"] == ["已收到计划创建成功回执"]
+    assert result["message"] == "来自真实业务查询的结果"
+    assert result["_framework"] == {"return_direct": True}
 
 
 @pytest.mark.asyncio
-async def test_business_continuation_forwards_ready_tool_result_without_summary() -> None:
+async def test_business_continuation_forwards_registered_action_without_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class DirectModel:
         def __init__(self) -> None:
             self.calls = 0
@@ -354,32 +355,7 @@ async def test_business_continuation_forwards_ready_tool_result_without_summary(
 
         async def ainvoke(self, messages: list[object]) -> AIMessage:
             self.calls += 1
-            if self.calls > 1:
-                raise AssertionError("ready direct result must skip business summary")
-            return AIMessage(
-                content="",
-                tool_calls=[{
-                    "name": "inspection_build_work_order_fill_state",
-                    "args": {
-                        "plan": {
-                            "planGuid": "plan-1",
-                            "planType": "5",
-                            "inspectStartTime": "2026-08-18 00:00:00",
-                            "inspectEndTime": "2026-08-18 23:59:59",
-                        },
-                        "coverage_rows": [{
-                            "deviceGuid": "tower-1",
-                            "deviceName": "10kV白路线#1",
-                            "parentDeviceGuid": "line-1",
-                            "parentDeviceName": "10kV白路线",
-                            "major": "dms",
-                            "dockGuid": "dock-1",
-                        }],
-                    },
-                    "id": "build-work-order-1",
-                    "type": "tool_call",
-                }],
-            )
+            raise AssertionError("registered continuation must not call the model")
 
     model = DirectModel()
     context = PluginContext()
@@ -389,6 +365,13 @@ async def test_business_continuation_forwards_ready_tool_result_without_summary(
         for item in build_agent_tools(model, plugin_context=context)
         if item.name == "continue_business_workflow"
     )
+    async def direct_handler(*_args: object) -> DirectActionResult:
+        return DirectActionResult(
+            action_id="inspection.create_work_order",
+            params={"orderDetailList": [{"deviceGuid": "tower-1"}]},
+        )
+
+    monkeypatch.setattr(context.continuations, "dispatch", direct_handler)
     token = set_runtime_context(RequestRuntimeContext(
         session_id="session-1",
         metadata={
@@ -406,7 +389,7 @@ async def test_business_continuation_forwards_ready_tool_result_without_summary(
         reset_runtime_context(token)
 
     direct = result["_framework"]["direct_action"]
-    assert model.calls == 1
+    assert model.calls == 0
     assert direct["action_id"] == "inspection.create_work_order"
     assert direct["params"]["orderDetailList"][0]["deviceGuid"] == "tower-1"
 

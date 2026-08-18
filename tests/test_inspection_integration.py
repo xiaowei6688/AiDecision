@@ -30,6 +30,8 @@ from app.integrations.inspection.workflows import (
     inspection_query_work_order_resources,
 )
 from app.integrations.inspection.websocket_actions import inspection_action_result_to_resume
+from app.integrations.inspection.continuations import inspection_continuation
+from app.integrations.inspection.workflows import inspection_build_work_order_fill_state
 from app.schemas.chat import WebSocketClientEvent
 from app.actions.schemas import ActionResult
 from app.integrations.projections import ProjectionRegistry
@@ -53,6 +55,90 @@ def test_inspection_registers_user_friendly_tool_steps() -> None:
     step = context.tools.step("inspection_query_device_data")
     assert step.title == "核对线路杆塔台账"
     assert step.summary == "正在按线路和范围核对杆塔 UID、名称、专业及所属线路"
+
+
+@pytest.mark.asyncio
+async def test_inspection_work_order_continuation_uses_real_records_for_final_summary() -> None:
+    plan = {
+        "planGuid": "plan-1",
+        "planName": "临时计划-白路线巡检",
+        "planType": "5",
+        "inspectStartTime": "2026-08-18 00:00:00",
+        "inspectEndTime": "2026-08-18 23:59:59",
+    }
+    created = [
+        {
+            "id": "order-1",
+            "work_order_no": "AL-20260818-001",
+            "work_content": "固定机场巡检，共1基杆塔",
+            "inspection_method": "dock",
+            "start_date": "2026-08-18 00:00:00",
+            "end_date": "2026-08-18 23:59:59",
+        },
+        {
+            "id": "order-2",
+            "work_order_no": "AL-20260818-002",
+            "work_content": "无人机巡检，共1基杆塔",
+            "inspection_method": "drone",
+            "start_date": "2026-08-18 00:00:00",
+            "end_date": "2026-08-18 23:59:59",
+        },
+    ]
+    rows = [
+        {
+            "deviceGuid": "tower-1",
+            "deviceName": "10kV白路线#1",
+            "parentDeviceGuid": "line-1",
+            "parentDeviceName": "10kV白路线",
+            "major": "dms",
+            "dockGuid": "dock-1",
+        },
+        {
+            "deviceGuid": "tower-2",
+            "deviceName": "10kV白路线#2",
+            "parentDeviceGuid": "line-1",
+            "parentDeviceName": "10kV白路线",
+            "major": "dms",
+        },
+    ]
+    calls: list[str] = []
+
+    class Broker:
+        async def execute(self, request, _allowed):
+            calls.append(request.tool_name)
+            if request.tool_name == "inspection_query_work_order_detail":
+                result = {
+                    "ok": True,
+                    "plan": plan,
+                    "completedGroups": ["covered", "uncovered"],
+                    "createdWorkOrders": created,
+                }
+            elif request.tool_name == "inspection_query_coverage":
+                result = {"ok": True, "rows": rows}
+            elif request.tool_name == "inspection_build_work_order_fill_state":
+                result = inspection_build_work_order_fill_state.invoke(request.arguments)
+            else:
+                raise AssertionError(f"unexpected tool: {request.tool_name}")
+            return SimpleNamespace(result=result, audit=SimpleNamespace(status="success"))
+
+    direct = await inspection_continuation(
+        {
+            "businessId": "inspection",
+            "operation": "verify_work_order_and_continue",
+            "workOrderId": "order-2",
+        },
+        SimpleNamespace(tool_broker=Broker()),
+    )
+
+    assert direct is not None
+    assert direct.model_dump()["kind"] == "message"
+    assert "AL-20260818-001" in direct.model_dump()["message"]
+    assert "AL-20260818-002" in direct.model_dump()["message"]
+    assert calls == [
+        "inspection_query_work_order_detail",
+        "inspection_query_coverage",
+        "inspection_build_work_order_fill_state",
+    ]
 
 
 def test_inspection_work_order_requires_a_drone_for_drone_method() -> None:

@@ -905,13 +905,40 @@ def _merge_created_work_orders(
 ) -> list[dict[str, Any]]:
     """Keep legacy-style per-order summaries while de-duplicating the current receipt."""
 
-    merged: dict[str, dict[str, Any]] = {}
+    merged: list[dict[str, Any] | None] = []
+    aliases: dict[str, int] = {}
     for index, item in enumerate([*created_work_orders, current_work_order]):
-        identifier = _first_present(item, "id", "workOrderId", "work_order_id", "work_order_no")
-        key = str(identifier) if identifier not in (None, "") else f"row-{index}"
-        existing = merged.get(key, {})
-        merged[key] = {**existing, **{name: value for name, value in item.items() if value not in (None, "")}}
-    return list(merged.values())
+        values = {name: value for name, value in item.items() if value not in (None, "")}
+        item_aliases = _work_order_aliases(values)
+        matches = {aliases[value] for value in item_aliases if value in aliases}
+        target = min(matches) if matches else len(merged)
+        if target == len(merged):
+            merged.append({})
+        for duplicate in sorted(matches - {target}, reverse=True):
+            duplicate_values = merged[duplicate]
+            if duplicate_values is not None:
+                merged[target] = {**duplicate_values, **(merged[target] or {})}
+                merged[duplicate] = None
+                for alias, position in list(aliases.items()):
+                    if position == duplicate:
+                        aliases[alias] = target
+        merged[target] = {**(merged[target] or {}), **values}
+        for alias in _work_order_aliases(merged[target] or {}):
+            aliases[alias] = target
+        if not item_aliases:
+            aliases[f"row-{index}"] = target
+    return [item for item in merged if item is not None]
+
+
+def _work_order_aliases(item: dict[str, Any]) -> set[str]:
+    return {
+        str(value)
+        for value in (
+            _first_present(item, "work_order_no", "workOrderNo", "orderNo"),
+            _first_present(item, "id", "workOrderId", "work_order_id"),
+        )
+        if value not in (None, "")
+    }
 
 
 def _work_order_final_summary(

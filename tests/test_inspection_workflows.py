@@ -1,6 +1,7 @@
 import json
 
 from app.integrations.inspection.workflows import inspection_build_work_order_fill_state
+from app.integrations.inspection.workflows import _merge_created_work_orders
 from app.integrations.inspection.direct_results import inspection_work_order_direct_action
 
 
@@ -101,6 +102,28 @@ def test_inspection_work_order_schema_requires_structured_model_arguments() -> N
     assert {item["type"] for item in coverage_schema["anyOf"]} == {"array", "null"}
     completed_schema = schema["properties"]["completed_groups"]
     assert {item["type"] for item in completed_schema["anyOf"]} == {"array", "null"}
+
+
+def test_created_work_orders_deduplicate_by_business_number_before_internal_id() -> None:
+    merged = _merge_created_work_orders(
+        [{
+            "id": "query-row-17",
+            "work_order_no": "AL-20260805-003",
+            "inspection_method": "drone",
+        }],
+        {
+            "id": "357520855904816740",
+            "work_order_no": "AL-20260805-003",
+            "work_content": "10kV白路线无人机巡检，共9基杆塔",
+        },
+    )
+
+    assert merged == [{
+        "id": "357520855904816740",
+        "work_order_no": "AL-20260805-003",
+        "inspection_method": "drone",
+        "work_content": "10kV白路线无人机巡检，共9基杆塔",
+    }]
 
 
 def test_inspection_work_orders_are_split_and_advanced_one_group_at_a_time() -> None:
@@ -214,6 +237,7 @@ def test_inspection_work_orders_are_split_and_advanced_one_group_at_a_time() -> 
             "towerCount": 2,
             "planName": "临时计划-白路线巡检",
         },
+        "status": "success",
     }
 
 

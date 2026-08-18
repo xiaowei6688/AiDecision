@@ -69,6 +69,37 @@ def _build_continue_business_workflow_tool(
                 "error_code": "UNKNOWN_BUSINESS_AGENT",
                 "message": str(exc),
             }
+        direct_result = await plugin_context.continuations.dispatch(
+            continuation,
+            plugin_context,
+        )
+        if direct_result is not None:
+            if isinstance(direct_result, DirectMessageResult):
+                return {
+                    "business_id": agent.business_id,
+                    "title": agent.title,
+                    "status": direct_result.status,
+                    "message": direct_result.message,
+                    "data": direct_result.data or {},
+                    "_framework": {"return_direct": True},
+                }
+            if not any(
+                direct_result.action_id.startswith(prefix)
+                for prefix in agent.action_prefixes
+            ):
+                return {
+                    "business_id": agent.business_id,
+                    "title": agent.title,
+                    "status": "failed",
+                    "error_code": "BUSINESS_DIRECT_RESULT_OUT_OF_SCOPE",
+                    "message": "业务续接处理器返回了未授权的直出动作。",
+                }
+            return {
+                "business_id": agent.business_id,
+                "title": agent.title,
+                "status": "success",
+                "_framework": {"direct_action": direct_result.model_dump()},
+            }
         return await _consult_business_agent(
             model,
             agent,
@@ -272,7 +303,7 @@ async def _consult_business_agent(
             return {
                 "business_id": agent.business_id,
                 "title": agent.title,
-                "status": "success",
+                "status": direct_result.status,
                 "message": direct_result.message,
                 "data": direct_result.data or {},
                 "_framework": {"return_direct": True},

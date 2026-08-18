@@ -25,12 +25,14 @@ class DirectMessageResult:
 
     message: str
     data: dict[str, Any] | None = None
+    status: str = "success"
 
     def model_dump(self) -> dict[str, Any]:
         return {
             "kind": "message",
             "message": self.message,
             "data": self.data or {},
+            "status": self.status,
         }
 
 

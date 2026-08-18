@@ -13,6 +13,7 @@ from app.integrations.inspection.checks import valid_time_window
 from app.integrations.inspection.direct_results import (
     inspection_work_order_direct_action,
 )
+from app.integrations.inspection.continuations import inspection_continuation
 from app.integrations.inspection.routes import router as inspection_router
 from app.integrations.inspection.ui import (
     inspection_action_result_projection,
@@ -46,6 +47,16 @@ def register_inspection_projections(context: PluginContext) -> None:
         inspection_frontend_callback_resume_projection
     )
     context.action_results.register(inspection_action_result_to_resume)
+    context.continuations.register(
+        "inspection",
+        "create_work_orders_from_plan",
+        inspection_continuation,
+    )
+    context.continuations.register(
+        "inspection",
+        "verify_work_order_and_continue",
+        inspection_continuation,
+    )
 
 
 def register_inspection_tools(context: PluginContext) -> None:

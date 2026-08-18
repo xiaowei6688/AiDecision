@@ -9,6 +9,7 @@ from app.actions.policy import PolicyEngine
 from app.actions.registry import ActionRegistry
 from app.agents.business_agents import BusinessAgentRegistry
 from app.integrations.projections import ProjectionRegistry
+from app.integrations.continuations import ContinuationRegistry
 from app.integrations.tools import IntegrationToolRegistry
 from app.integrations.websocket_actions import ActionResultHandlerRegistry
 from app.tools.broker import ToolBroker
@@ -33,6 +34,7 @@ class PluginContext:
     action_results: ActionResultHandlerRegistry = field(
         default_factory=ActionResultHandlerRegistry
     )
+    continuations: ContinuationRegistry = field(default_factory=ContinuationRegistry)
     action_executor: BusinessActionExecutor = field(init=False)
     tool_broker: ToolBroker = field(init=False)
 
