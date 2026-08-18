@@ -123,7 +123,7 @@ def inspection_frontend_callback_resume_projection(
         }
 
     action_result_code = _first_non_empty(data, "actionCode", "action_code")
-    if action_result_code != "createTempOrder":
+    if action_result_code not in {None, "createTempOrder"}:
         return {
             "status": "failed",
             "message": "巡检工单创建结果需要通过 actionResult 回传。",
@@ -136,7 +136,6 @@ def inspection_frontend_callback_resume_projection(
             },
         }
 
-    message = data.get("message") or resume_value.get("content") or "巡检工单已创建成功。"
     pending_execute_payload = pending_payload.get("executePayload")
     pending_execute_payload = (
         pending_execute_payload if isinstance(pending_execute_payload, dict) else {}
@@ -148,6 +147,25 @@ def inspection_frontend_callback_resume_projection(
         if pending_execute_payload.get("inspectionMethod") == "drone"
         else None
     )
+
+    # The legacy work-order flow treats the user's approve resume as the
+    # completion signal; an actionResult is optional for clients that still
+    # perform the frontend callback and return its business ID.
+    if action_result_code is None:
+        return {
+            "status": "success",
+            "message": resume_value.get("content") or "已确认创建巡检工单。",
+            "data": {
+                "pendingAction": pending_payload,
+                "frontendResult": data,
+                "createdWorkOrderId": None,
+                "completedWorkOrderGroup": completed_group,
+                "confirmationOnly": True,
+                "final": True,
+            },
+        }
+
+    message = data.get("message") or resume_value.get("content") or "巡检工单已创建成功。"
     return {
         "status": "success",
         "message": message,

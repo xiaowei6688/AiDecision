@@ -468,13 +468,13 @@ def test_inspection_plan_plain_resume_does_not_fake_action_result() -> None:
     assert projected["error_code"] == "ACTION_RESULT_REQUIRED"
 
 
-def test_inspection_work_order_frontend_callback_requires_action_result() -> None:
+def test_inspection_work_order_approve_completes_without_action_result() -> None:
     projected = inspection_frontend_callback_resume_projection(
         {
             "status": "requires_confirmation",
             "action_id": "inspection.create_work_order",
             "actionCode": "createTempOrder",
-            "executePayload": {"planGuid": "plan-1"},
+            "executePayload": {"planGuid": "plan-1", "inspectionMethod": "dock"},
         },
         {
             "action": "approve",
@@ -483,9 +483,26 @@ def test_inspection_work_order_frontend_callback_requires_action_result() -> Non
         },
     )
 
+    assert projected["status"] == "success"
+    assert projected["data"]["confirmationOnly"] is True
+    assert projected["data"]["completedWorkOrderGroup"] == "covered"
+    assert projected["data"]["final"] is True
+
+
+def test_inspection_work_order_rejects_wrong_action_result_code() -> None:
+    projected = inspection_frontend_callback_resume_projection(
+        {
+            "action_id": "inspection.create_work_order",
+            "actionCode": "createTempOrder",
+        },
+        {
+            "action": "approve",
+            "data": {"actionCode": "createPlan"},
+        },
+    )
+
     assert projected["status"] == "failed"
     assert projected["error_code"] == "ACTION_RESULT_REQUIRED"
-    assert "actionResult" in projected["message"]
 
 
 def test_inspection_work_order_action_result_requires_post_create_verification() -> None:
