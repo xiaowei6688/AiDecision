@@ -1,4 +1,4 @@
-"""Central execution boundary for Business Agent read-only tools."""
+"""业务 Agent 只读工具的集中执行边界。"""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ class ToolBrokerResult:
 
 
 class ToolBroker:
-    """Authorize, execute and audit plugin-owned read-only tools."""
+    """授权、执行并审计插件持有的只读工具。"""
 
     def __init__(self, registry: IntegrationToolRegistry) -> None:
         self._registry = registry

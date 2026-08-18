@@ -1,4 +1,4 @@
-"""Typed event projection registry owned by one plugin context."""
+"""由单个插件上下文持有的类型化事件投影注册表。"""
 
 from __future__ import annotations
 

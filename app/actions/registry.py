@@ -7,7 +7,7 @@ from app.actions.schemas import ActionSpec
 
 
 class ActionRegistry:
-    """In-memory registry for model-facing business action contracts."""
+    """面向模型的业务动作契约内存注册表。"""
 
     def __init__(self, actions: Iterable[ActionSpec] | None = None) -> None:
         self._actions: dict[str, ActionSpec] = {}

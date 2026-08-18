@@ -22,7 +22,7 @@ def build_agent_tools(
     model: BaseChatModel,
     plugin_context: PluginContext | None = None,
 ) -> list[Any]:
-    """Build tools that may need runtime dependencies such as the chat model."""
+    """构建可能依赖对话模型等运行时组件的工具。"""
 
     if plugin_context is None:
         raise ValueError("plugin_context is required to build Agent tools")

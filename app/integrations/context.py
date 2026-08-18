@@ -1,4 +1,4 @@
-"""Application-scoped capability context for business plugins."""
+"""业务插件的应用级能力上下文。"""
 
 from __future__ import annotations
 
@@ -18,10 +18,10 @@ from app.tools.datetime_tool import compute_datetime
 
 @dataclass
 class PluginContext:
-    """All capabilities exposed by one application instance.
+    """单个应用实例暴露的全部能力。
 
-    Keeping this object application-scoped prevents two differently configured
-    FastAPI applications in one process from sharing plugin registrations.
+    将此对象限制在应用作用域内，可以避免同一进程中配置不同的
+    FastAPI 应用共享插件注册信息。
     """
 
     action_registry: ActionRegistry = field(default_factory=ActionRegistry)

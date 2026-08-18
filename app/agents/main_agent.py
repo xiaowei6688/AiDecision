@@ -24,7 +24,7 @@ def build_main_agent(
     checkpointer: BaseCheckpointSaver,
     plugin_context: PluginContext | None = None,
 ) -> Any:
-    """Build the single orchestrating DeepAgent graph."""
+    """构建唯一的 DeepAgent 编排图。"""
 
     chat_model = build_chat_model(settings)
     return create_deep_agent(

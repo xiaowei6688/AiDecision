@@ -95,7 +95,7 @@ def request_human_input(
 ) -> Command:
     """暂停代理运行，并要求前端/用户做出决定。
 
-    Args:
+    参数：
         question: 展示给用户的问题或确认文案。
         reason: 为什么需要人工介入。
         allowed_actions: 前端允许用户提交的动作。

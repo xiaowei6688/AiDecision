@@ -1,4 +1,4 @@
-"""Runtime adapters for Business Agent implementations."""
+"""业务 Agent 实现的运行时适配器。"""
 
 from __future__ import annotations
 
@@ -32,13 +32,13 @@ class BusinessAgentRunResult:
 
 
 class BusinessAgentRuntime(Protocol):
-    """Local implementation behind a BusinessAgentManifest."""
+    """BusinessAgentManifest 背后的本地实现。"""
 
     async def invoke(self, invocation: BusinessAgentInvocation) -> BusinessAgentRunResult:
-        """Return structured, non-executable advice for the requested business domain."""
+        """针对指定业务领域返回结构化、不可直接执行的建议。"""
 
     async def health(self) -> dict[str, Any]:
-        """Return a lightweight local runtime availability report."""
+        """返回轻量级的本地运行时可用性报告。"""
 
 
 class LocalLLMBusinessAgent:
@@ -129,7 +129,7 @@ def build_business_agent_runtime(
     manifest: BusinessAgentManifest,
     model: BaseChatModel,
 ) -> BusinessAgentRuntime:
-    """Build the local runtime used by every business Agent in this framework."""
+    """构建框架内所有业务 Agent 共用的本地运行时。"""
 
     return LocalLLMBusinessAgent(model)
 

@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 
 class PlanStore:
-    """Session-scoped plan store; replace with durable storage before multi-instance execution."""
+    """会话级计划存储；多实例运行前应替换为持久化存储。"""
 
     def __init__(self, durable_state: "PostgresDurableState | None" = None) -> None:
         self._plans: dict[str, ExecutionPlan] = {}

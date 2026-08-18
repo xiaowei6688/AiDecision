@@ -1,1 +1,1 @@
-"""Shared business concepts used across system integrations."""
+"""跨系统集成共用的业务概念。"""

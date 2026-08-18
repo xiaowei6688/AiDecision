@@ -1,4 +1,4 @@
-"""Business Agent contracts consumed by the single orchestration Agent."""
+"""供单一编排 Agent 使用的业务 Agent 契约。"""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class RecommendedAction(BaseModel):
 
 
 class BusinessAdvice(BaseModel):
-    """Structured, non-executable recommendation returned by a Business Agent."""
+    """业务 Agent 返回的结构化、不可直接执行的建议。"""
 
     facts_and_constraints: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
@@ -34,7 +34,7 @@ class BusinessAdvice(BaseModel):
 
 
 class BusinessCollaborationStep(BaseModel):
-    """One Business Agent consultation chosen by the orchestration Agent."""
+    """编排 Agent 选定的一次业务 Agent 咨询。"""
 
     business_id: str
     reason: str = Field(min_length=1)
@@ -42,7 +42,7 @@ class BusinessCollaborationStep(BaseModel):
 
 
 class BusinessCollaborationPlan(BaseModel):
-    """An auditable dependency graph for Business Agent reasoning."""
+    """用于业务 Agent 推理的可审计依赖图。"""
 
     task: str = Field(min_length=1)
     steps: list[BusinessCollaborationStep] = Field(min_length=1)
@@ -70,7 +70,7 @@ def validate_collaboration_plan(
 
 
 def collaboration_waves(plan: BusinessCollaborationPlan) -> list[list[BusinessCollaborationStep]]:
-    """Return dependency-safe batches that can be consulted in parallel."""
+    """返回满足依赖约束、可并行咨询的任务批次。"""
 
     remaining = {step.business_id: step for step in plan.steps}
     completed: set[str] = set()
@@ -107,7 +107,7 @@ def _ensure_collaboration_acyclic(steps: list[BusinessCollaborationStep]) -> Non
 
 
 def parse_business_advice(content: str) -> BusinessAdvice:
-    """Validate a Business Agent response without accepting prose as advice."""
+    """校验业务 Agent 响应，不接受非结构化文本作为建议。"""
 
     try:
         return BusinessAdvice.model_validate(json.loads(content))
@@ -117,7 +117,7 @@ def parse_business_advice(content: str) -> BusinessAdvice:
 
 @dataclass(frozen=True)
 class BusinessAgentManifest:
-    """A domain capability, not a user-selectable root Agent."""
+    """领域能力定义，不是可由用户选择的根 Agent。"""
 
     business_id: str
     title: str
@@ -157,7 +157,7 @@ class BusinessAgentRegistry:
             raise KeyError(f"Unknown business Agent: {business_id}") from exc
 
     def contains(self, business_id: str) -> bool:
-        """Return whether a plugin capability has already been registered."""
+        """返回插件能力是否已经注册。"""
 
         return business_id in self._agents
 

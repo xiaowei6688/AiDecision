@@ -1,4 +1,4 @@
-"""Plugin-owned deterministic handlers for business continuation events."""
+"""由插件持有的确定性业务续接事件处理器。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ ContinuationHandler = Callable[
 
 
 class ContinuationRegistry:
-    """Dispatch plugin-declared continuation operations without model reasoning."""
+    """无需模型推理，直接分发插件声明的续接操作。"""
 
     def __init__(self) -> None:
         self._handlers: dict[tuple[str, str], ContinuationHandler] = {}

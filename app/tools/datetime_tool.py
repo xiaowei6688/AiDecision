@@ -1,4 +1,4 @@
-"""Deterministic, timezone-aware date resolution shared by all Agents."""
+"""所有 Agent 共用的确定性、时区感知日期解析能力。"""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def resolve_datetime_expression(
     *,
     compare_to_today: bool = False,
 ) -> dict[str, Any]:
-    """Resolve a relative, Chinese calendar, or ISO expression deterministically."""
+    """确定性解析相对日期、中文日历日期或 ISO 日期表达式。"""
 
     tz = _resolve_timezone(timezone)
     value = (expression or "").strip()

@@ -10,7 +10,7 @@ from app.core.runtime_context import RequestRuntimeContext
 
 
 class PostgresDurableState:
-    """Durable ownership and single-use confirmation state for multi-instance runs."""
+    """多实例运行时的持久化归属关系与一次性确认状态。"""
 
     def __init__(self, pool: AsyncConnectionPool[Any]) -> None:
         self._pool = pool

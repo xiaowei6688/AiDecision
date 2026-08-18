@@ -15,7 +15,7 @@ class PolicyDecision:
 
 
 class PolicyEngine:
-    """Runs deterministic authorization and business pre-checks."""
+    """执行确定性的授权和业务前置检查。"""
 
     def __init__(self) -> None:
         self._pre_checks: dict[str, PreCheck] = {}

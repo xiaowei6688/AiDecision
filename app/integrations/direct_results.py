@@ -1,4 +1,4 @@
-"""Framework contracts for model-free forwarding of completed tool results."""
+"""无需模型参与即可转发已完成工具结果的框架契约。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class DirectActionResult:
 
 @dataclass(frozen=True)
 class DirectMessageResult:
-    """A plugin-owned final message that does not need model rewriting."""
+    """由插件生成、无需模型改写的最终消息。"""
 
     message: str
     data: dict[str, Any] | None = None

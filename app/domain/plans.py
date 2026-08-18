@@ -1,4 +1,4 @@
-"""Validated, non-executable plans for cross-system work."""
+"""用于跨系统任务的已校验、不可直接执行的计划。"""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ class PlanStatus(StrEnum):
 
 
 class PlanStep(BaseModel):
-    """One query or action in a cross-system plan."""
+    """跨系统计划中的单个查询或动作。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -53,7 +53,7 @@ class PlanStep(BaseModel):
 
 
 class ExecutionPlan(BaseModel):
-    """A reviewable plan. Creation validates it but never performs work."""
+    """可供审核的计划；创建时只进行校验，不执行实际操作。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -80,7 +80,7 @@ def validate_execution_plan(
     actions: ActionRegistry,
     datasources: set[str],
 ) -> ExecutionPlan:
-    """Validate dependencies and action inputs before a plan can be reviewed."""
+    """计划进入审核前，校验依赖关系和动作输入。"""
 
     step_ids = [step.step_id for step in plan.steps]
     if len(step_ids) != len(set(step_ids)):

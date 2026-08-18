@@ -5,7 +5,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class RequestRuntimeContext:
-    """Trusted request facts made available to tools without model-controlled args."""
+    """无需模型控制参数即可提供给工具的可信请求事实。"""
 
     user_id: str | None = None
     user_roles: tuple[str, ...] = ()

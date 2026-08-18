@@ -1,4 +1,4 @@
-"""Typed tool registry owned by one plugin context."""
+"""由单个插件上下文持有的类型化工具注册表。"""
 
 from __future__ import annotations
 

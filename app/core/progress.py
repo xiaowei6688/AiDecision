@@ -1,4 +1,4 @@
-"""Request-scoped progress events shared by framework execution boundaries."""
+"""框架执行边界共享的请求级进度事件。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from uuid import uuid4
 
 @dataclass(frozen=True)
 class ProgressEvent:
-    """A safe, generic lifecycle event for a long-running framework operation."""
+    """适用于框架长时间操作的安全、通用生命周期事件。"""
 
     event_id: str
     session_id: str | None
@@ -25,7 +25,7 @@ class ProgressEvent:
 
 
 class ProgressChannel:
-    """A request-local async channel; instances must not be shared across sessions."""
+    """请求内异步通道；实例不得在不同会话之间共享。"""
 
     def __init__(self) -> None:
         self._events: asyncio.Queue[ProgressEvent] = asyncio.Queue()

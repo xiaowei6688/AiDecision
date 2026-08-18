@@ -1,4 +1,4 @@
-"""Typed WebSocket action-result handlers owned by one plugin context."""
+"""由单个插件上下文持有的类型化 WebSocket 动作结果处理器。"""
 
 from __future__ import annotations
 

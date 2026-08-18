@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 @dataclass(frozen=True)
 class ActionInputSpec:
-    """A single input expected by a business action."""
+    """业务动作所需的单个输入项。"""
 
     name: str
     type: str = "string"
@@ -17,7 +17,7 @@ class ActionInputSpec:
 
 @dataclass(frozen=True)
 class ActionConfirmation:
-    """Human confirmation policy for a business action."""
+    """业务动作的人机确认策略。"""
 
     required: bool = False
     template: str | None = None
@@ -25,7 +25,7 @@ class ActionConfirmation:
 
 @dataclass(frozen=True)
 class ActionExecutorSpec:
-    """Where and how the real business operation is executed."""
+    """真实业务操作的执行位置与执行方式。"""
 
     adapter: str
     method: str
@@ -34,7 +34,7 @@ class ActionExecutorSpec:
 
 @dataclass(frozen=True)
 class ActionSpec:
-    """Structured contract used by the Agent to understand a business action."""
+    """供 Agent 理解业务动作的结构化契约。"""
 
     action_id: str
     title: str
@@ -51,7 +51,7 @@ class ActionSpec:
     input_model: type[BaseModel] | None = None
 
     def public_dict(self) -> dict[str, Any]:
-        """Return the compact, model-facing action description."""
+        """返回面向模型的精简动作描述。"""
 
         return {
             "action_id": self.action_id,
@@ -79,7 +79,7 @@ class ActionSpec:
 
 @dataclass(frozen=True)
 class ActionExecutionContext:
-    """Runtime facts used by policies and adapters."""
+    """供策略和适配器使用的运行时事实。"""
 
     user_id: str | None = None
     user_roles: list[str] = field(default_factory=list)
@@ -89,7 +89,7 @@ class ActionExecutionContext:
 
 @dataclass(frozen=True)
 class ActionResult:
-    """Normalized action execution result."""
+    """标准化的动作执行结果。"""
 
     status: Literal["success", "failed", "requires_confirmation"]
     action_id: str

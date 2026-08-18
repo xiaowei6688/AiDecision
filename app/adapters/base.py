@@ -4,7 +4,7 @@ from app.actions.schemas import ActionExecutionContext
 
 
 class BusinessAdapter(Protocol):
-    """Adapter contract for real business systems or MCP gateways."""
+    """真实业务系统或 MCP 网关的适配器契约。"""
 
     async def invoke(
         self,
@@ -12,8 +12,8 @@ class BusinessAdapter(Protocol):
         params: dict[str, Any],
         context: ActionExecutionContext,
     ) -> dict[str, Any]:
-        """Run a named business operation and return normalized data.
+        """执行指定的业务操作并返回标准化数据。
 
-        For write operations, adapters must forward context.metadata["idempotency_key"]
-        to their upstream system when that system supports idempotent requests.
+        执行写操作时，如果上游系统支持幂等请求，适配器必须将
+        context.metadata["idempotency_key"] 转发给上游系统。
         """

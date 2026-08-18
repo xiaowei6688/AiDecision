@@ -4,7 +4,7 @@ from urllib import error, request
 
 
 class TextToSqlClient:
-    """HTTP client wrapper for an external text-to-sql service."""
+    """外部 Text-to-SQL 服务的 HTTP 客户端封装。"""
 
     def __init__(self, base_url: str | None, timeout_seconds: float = 30.0) -> None:
         self._base_url = base_url.rstrip("/") if base_url else None

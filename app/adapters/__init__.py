@@ -1,4 +1,4 @@
-"""Business adapter package.
+"""业务适配器包。
 
-Import concrete adapters from their modules to avoid circular imports during app startup.
+具体适配器应从各自模块导入，避免应用启动时产生循环依赖。
 """

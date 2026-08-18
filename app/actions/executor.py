@@ -15,7 +15,7 @@ from app.core.durable_state import PostgresDurableState
 
 
 class BusinessActionExecutor:
-    """Validates, authorizes and invokes registered business actions."""
+    """校验、授权并调用已注册的业务动作。"""
 
     def __init__(
         self,
@@ -39,7 +39,7 @@ class BusinessActionExecutor:
         self._adapters[name] = adapter
 
     def configure_confirmation(self, secret: str, ttl_seconds: int | None = None) -> None:
-        """Configure confirmation signing from trusted application settings."""
+        """根据可信的应用配置设置确认签名。"""
 
         self._confirmation_secret = secret.encode()
         if ttl_seconds is not None:

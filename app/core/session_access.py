@@ -13,7 +13,7 @@ class SessionOwner:
 
 
 class SessionAccessStore:
-    """Replaceable ownership store; production should back this with a DB."""
+    """可替换的归属关系存储；生产环境应使用数据库实现。"""
 
     def __init__(
         self,
@@ -42,7 +42,7 @@ class SessionAccessStore:
         with self._lock:
             record = self._owners.get(session_id)
             if record is None and self._allow_unknown:
-                # Development compatibility for pre-existing checkpoint threads.
+                # 开发环境兼容已有的检查点会话。
                 self._owners[session_id] = (SessionOwner(auth.user_id, auth.tenant_id), auth)
                 return
             if record is None:

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import math
 import re
 from typing import Any
 
@@ -22,6 +20,35 @@ from app.integrations.inspection.allcore_auth import (
     get_inspection_allcore_auth_client,
 )
 from app.integrations.inspection.config import get_inspection_settings
+from app.integrations.inspection.coverage import (
+    has_coverage as _has_coverage,
+    haversine as _haversine,
+    map_route as _map_route,
+    merge_tower_coverage as _merge_tower_coverage,
+    nearest_airport as _nearest_airport,
+    query_plan_coverage_rows as _query_plan_coverage_rows,
+)
+from app.integrations.inspection.workflow_shared import (
+    as_float as _as_float,
+    coerce_list_argument as _coerce_list_argument,
+    coerce_mapping_argument as _coerce_mapping_argument,
+    coerce_string_list_argument as _coerce_string_list_argument,
+    complete_plan_object as _complete_plan_object,
+    error as _error,
+    find_rows as _find_rows,
+    first_present as _first_present,
+    first_row_value as _first_row_value,
+    rows_from_text2sql_result as _rows_from_text2sql_result,
+    tower_range_invalid_message as _tower_range_invalid_message,
+)
+from app.integrations.inspection.work_order_summary import (
+    display_work_order_method as _display_work_order_method,
+    display_work_order_time as _display_work_order_time,
+    display_work_order_value as _display_work_order_value,
+    merge_created_work_orders as _merge_created_work_orders,
+    work_order_aliases as _work_order_aliases,
+    work_order_final_summary as _work_order_final_summary,
+)
 from app.tools.datetime_tool import resolve_datetime_expression
 
 
@@ -258,182 +285,6 @@ def inspection_query_coverage(
         "coveredCount": len(covered),
         "uncoveredCount": len(uncovered),
     }
-
-
-def _query_plan_coverage_rows(
-    client: TextToSqlClient,
-    datasource: str,
-    plan_guid: str,
-) -> dict[str, Any]:
-    tower_result = client.query(
-        datasource=datasource,
-        question=(
-            f"查询计划 plan_guid={plan_guid} 下所有杆塔的杆塔guid、杆塔名称、线路guid、线路名称、"
-            "专业、作业性质、经度、纬度、海拔、电压等级、电压等级中文、杆塔性质和杆塔排序号"
-        ),
-    )
-    if tower_result.get("status") != "success":
-        return tower_result
-    towers = _rows_from_text2sql_result(tower_result)
-    if not towers:
-        return _error("empty_plan_towers", f"计划 {plan_guid} 下未查询到杆塔数据")
-
-    device_guids = [
-        str(_first_present(row, "device_guid", "deviceGuid", "tower_guid", "tower_uid"))
-        for row in towers
-        if _first_present(row, "device_guid", "deviceGuid", "tower_guid", "tower_uid")
-    ]
-    route_result = client.query(
-        datasource=datasource,
-        question=(
-            f"查询杆塔 device_guid 在 [{ '、'.join(device_guids) }] 中的所有航迹信息，"
-            "包含 id、route_guid、parent_device_guid、device_guid、device_type、route_description、"
-            "file_guid、file_type、route_type、route_version_type、route_source、"
-            "adapted_model、track_version、track_type、route_content、"
-            "description、upload_source、dept_code、create_user、create_time、"
-            "update_user、update_time、is_deleted、create_dept"
-        ),
-    )
-    if route_result.get("status") != "success":
-        return route_result
-    airport_result = client.query(
-        datasource=datasource,
-        question="查询所有机场/机巢的机场guid、机场名称、经度、纬度和巡检半径",
-    )
-    if airport_result.get("status") != "success":
-        return airport_result
-
-    routes_by_device: dict[str, list[dict[str, Any]]] = {}
-    for row in _rows_from_text2sql_result(route_result):
-        device_guid = _first_present(row, "device_guid", "deviceGuid", "tower_guid", "tower_uid")
-        if device_guid:
-            routes_by_device.setdefault(str(device_guid), []).append(_map_route(row))
-    airports = _rows_from_text2sql_result(airport_result)
-    rows = [
-        _merge_tower_coverage(row, routes_by_device, airports, index)
-        for index, row in enumerate(towers, start=1)
-    ]
-    return {"status": "success", "data": {"rows": rows}}
-
-
-def _merge_tower_coverage(
-    tower: dict[str, Any],
-    routes_by_device: dict[str, list[dict[str, Any]]],
-    airports: list[dict[str, Any]],
-    index: int,
-) -> dict[str, Any]:
-    device_guid = _first_present(tower, "device_guid", "deviceGuid", "tower_guid", "tower_uid")
-    parent_device_guid = _first_present(
-        tower,
-        "parent_device_guid",
-        "parentDeviceGuid",
-        "line_guid",
-        "line_uid",
-    )
-    longitude = _as_float(_first_present(tower, "longitude", "lng"))
-    latitude = _as_float(_first_present(tower, "latitude", "lat"))
-    airport = _nearest_airport(longitude, latitude, airports)
-    routes = [
-        {
-            **route,
-            "parentDeviceGuid": route.get("parentDeviceGuid") or parent_device_guid,
-        }
-        for route in routes_by_device.get(str(device_guid), [])
-    ]
-    first_route = routes[0] if routes else {}
-    route_fields = {
-        key: first_route.get(key)
-        for key in ("routeGuid", "routeContent", "routeDescription", "fileGuid", "fileType")
-    }
-    return {
-        **tower,
-        "deviceGuid": device_guid,
-        "deviceName": _first_present(tower, "device_name", "deviceName", "basic_tower_ledger_name", "tower_name"),
-        "parentDeviceGuid": parent_device_guid,
-        "parentDeviceName": _first_present(tower, "parent_device_name", "parentDeviceName", "basic_line_ledger_name", "line_name"),
-        "major": _first_present(tower, "major", "专业") or "tms",
-        "workNature": _first_present(tower, "work_nature", "workNature"),
-        "towerSort": _first_present(tower, "tower_sort", "towerSort") or index,
-        "longitude": longitude,
-        "latitude": latitude,
-        "dockGuid": _first_present(airport or {}, "dock_guid", "dockGuid", "airport_guid", "airportGuid"),
-        "dockName": _first_present(airport or {}, "dock_name", "dockName", "airport_name", "airportName"),
-        "deviceRouteList": routes,
-        **route_fields,
-    }
-
-
-def _map_route(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "id": _first_present(row, "id"),
-        "createUser": _first_present(row, "create_user", "createUser"),
-        "createTime": _first_present(row, "create_time", "createTime"),
-        "updateUser": _first_present(row, "update_user", "updateUser"),
-        "updateTime": _first_present(row, "update_time", "updateTime"),
-        "deptCode": _first_present(row, "dept_code", "deptCode"),
-        "isDeleted": _first_present(row, "is_deleted", "isDeleted"),
-        "createDept": _first_present(row, "create_dept", "createDept"),
-        "routeGuid": _first_present(row, "route_guid", "routeGuid"),
-        "parentDeviceGuid": _first_present(row, "parent_device_guid", "parentDeviceGuid"),
-        "deviceGuid": _first_present(row, "device_guid", "deviceGuid"),
-        "routeDescription": _first_present(row, "route_description", "routeDescription"),
-        "description": _first_present(row, "description"),
-        "fileGuid": _first_present(row, "file_guid", "fileGuid"),
-        "routeVersionType": _first_present(row, "route_version_type", "routeVersionType"),
-        "routeType": _first_present(row, "route_type", "routeType"),
-        "deviceType": _first_present(row, "device_type", "deviceType"),
-        "routeSource": _first_present(row, "route_source", "routeSource"),
-        "adaptedModel": _first_present(row, "adapted_model", "adaptedModel"),
-        "trackVersion": _first_present(row, "track_version", "trackVersion"),
-        "trackType": _first_present(row, "track_type", "trackType"),
-        "routeContent": _first_present(row, "route_content", "routeContent"),
-        "fileType": _first_present(row, "file_type", "fileType"),
-        "uploadSource": _first_present(row, "upload_source", "uploadSource"),
-    }
-
-
-def _nearest_airport(
-    longitude: float | None,
-    latitude: float | None,
-    airports: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    if longitude is None or latitude is None:
-        return None
-    nearest: dict[str, Any] | None = None
-    nearest_distance = float("inf")
-    for airport in airports:
-        airport_longitude = _as_float(_first_present(airport, "longitude", "lng"))
-        airport_latitude = _as_float(_first_present(airport, "latitude", "lat"))
-        if airport_longitude is None or airport_latitude is None:
-            continue
-        radius = _as_float(_first_present(airport, "inspection_radius", "inspectionRadius")) or 3000.0
-        distance = _haversine(longitude, latitude, airport_longitude, airport_latitude)
-        if distance <= radius and distance < nearest_distance:
-            nearest = airport
-            nearest_distance = distance
-    return nearest
-
-
-def _haversine(longitude1: float, latitude1: float, longitude2: float, latitude2: float) -> float:
-    radius = 6_371_000.0
-    latitude1_radians = math.radians(latitude1)
-    latitude2_radians = math.radians(latitude2)
-    latitude_delta = math.radians(latitude2 - latitude1)
-    longitude_delta = math.radians(longitude2 - longitude1)
-    value = (
-        math.sin(latitude_delta / 2) ** 2
-        + math.cos(latitude1_radians)
-        * math.cos(latitude2_radians)
-        * math.sin(longitude_delta / 2) ** 2
-    )
-    return radius * 2 * math.atan2(math.sqrt(value), math.sqrt(1 - value))
-
-
-def _as_float(value: Any) -> float | None:
-    try:
-        return float(value) if value not in (None, "") else None
-    except (TypeError, ValueError):
-        return None
 
 
 @tool
@@ -741,14 +592,6 @@ def inspection_build_work_order_fill_state(
     return {"ok": ready, "workOrderFillState": state}
 
 
-def _has_coverage(row: dict[str, Any]) -> bool:
-    for key in ("dockGuid", "dockName", "airportGuid", "airportName", "airport_uid", "airport_name", "机场uid", "机场名称"):
-        if row.get(key):
-            return True
-    value = row.get("covered", row.get("isCovered", row.get("是否覆盖")))
-    return value is True or str(value) in {"1", "true", "True", "是", "已覆盖", "covered"}
-
-
 def _row_to_detail(row: dict[str, Any]) -> dict[str, Any] | None:
     device_guid = row.get("deviceGuid") or row.get("tower_guid") or row.get("tower_uid") or row.get("towerGuid") or row.get("杆塔uid")
     parent_guid = row.get("parentDeviceGuid") or row.get("line_guid") or row.get("line_uid") or row.get("lineGuid") or row.get("线路uid")
@@ -785,59 +628,6 @@ def _row_to_detail(row: dict[str, Any]) -> dict[str, Any] | None:
         "workNature": row.get("workNature") or row.get("work_nature") or _work_nature(str(major)),
         "major": major,
     }
-
-
-def _coerce_mapping_argument(value: dict[str, Any] | str, name: str) -> dict[str, Any]:
-    parsed = _load_json_argument(value, name)
-    if not isinstance(parsed, dict):
-        raise TypeError(f"{name} 必须是对象")
-    return parsed
-
-
-def _coerce_list_argument(
-    value: list[dict[str, Any]] | str | None,
-    name: str,
-) -> list[dict[str, Any]]:
-    if value is None:
-        return []
-    parsed = _load_json_argument(value, name)
-    if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
-        raise TypeError(f"{name} 必须是对象数组")
-    return parsed
-
-
-def _coerce_string_list_argument(
-    value: list[str] | str | None,
-    name: str,
-) -> list[str]:
-    if value is None:
-        return []
-    parsed = _load_json_argument(value, name)
-    if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
-        raise TypeError(f"{name} 必须是字符串数组")
-    return parsed
-
-
-def _load_json_argument(value: Any, name: str) -> Any:
-    if not isinstance(value, str):
-        return value
-    candidate = value.strip()
-    last_error: json.JSONDecodeError | None = None
-    for _ in range(3):
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError as exc:
-            last_error = exc
-            try:
-                candidate = json.loads(f'"{candidate}"')
-            except json.JSONDecodeError:
-                break
-            continue
-        if isinstance(parsed, str) and parsed.strip().startswith(("{", "[")):
-            candidate = parsed.strip()
-            continue
-        return parsed
-    raise ValueError(f"{name} 不是有效的 JSON 字符串") from last_error
 
 
 def _plan_type_code(value: str) -> str:
@@ -880,187 +670,3 @@ def _work_content(
     line_names = "、".join(dict.fromkeys(name for name in lines if name))
     type_name = PLAN_TYPES.get(plan_type, str(plan.get("planTypeZh") or plan_type))
     return f"{start} {line_names} {type_name}，共{len(details)}基杆塔"[:100]
-
-
-def _first_row_value(rows: list[dict[str, Any]], *keys: str) -> Any:
-    for row in rows:
-        for key in keys:
-            value = row.get(key)
-            if value not in (None, ""):
-                return value
-    return None
-
-
-def _first_present(value: dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        candidate = value.get(key)
-        if candidate not in (None, ""):
-            return candidate
-    return None
-
-
-def _merge_created_work_orders(
-    created_work_orders: list[dict[str, Any]],
-    current_work_order: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Keep legacy-style per-order summaries while de-duplicating the current receipt."""
-
-    merged: list[dict[str, Any] | None] = []
-    aliases: dict[str, int] = {}
-    for index, item in enumerate([*created_work_orders, current_work_order]):
-        values = {name: value for name, value in item.items() if value not in (None, "")}
-        item_aliases = _work_order_aliases(values)
-        matches = {aliases[value] for value in item_aliases if value in aliases}
-        target = min(matches) if matches else len(merged)
-        if target == len(merged):
-            merged.append({})
-        for duplicate in sorted(matches - {target}, reverse=True):
-            duplicate_values = merged[duplicate]
-            if duplicate_values is not None:
-                merged[target] = {**duplicate_values, **(merged[target] or {})}
-                merged[duplicate] = None
-                for alias, position in list(aliases.items()):
-                    if position == duplicate:
-                        aliases[alias] = target
-        merged[target] = {**(merged[target] or {}), **values}
-        for alias in _work_order_aliases(merged[target] or {}):
-            aliases[alias] = target
-        if not item_aliases:
-            aliases[f"row-{index}"] = target
-    return [item for item in merged if item is not None]
-
-
-def _work_order_aliases(item: dict[str, Any]) -> set[str]:
-    return {
-        str(value)
-        for value in (
-            _first_present(item, "work_order_no", "workOrderNo", "orderNo"),
-            _first_present(item, "id", "workOrderId", "work_order_id"),
-        )
-        if value not in (None, "")
-    }
-
-
-def _work_order_final_summary(
-    created_work_orders: list[dict[str, Any]],
-    *,
-    plan_name: str,
-) -> str:
-    """Render the legacy final work-order summary without involving the model."""
-
-    lines = [
-        "已成功创建全部巡检工单，具体信息如下：",
-    ]
-    for index, order in enumerate(created_work_orders, start=1):
-        method = _display_work_order_method(order)
-        lines.extend([
-            "",
-            f"### 工单 {index}｜{method}工单",
-            f"- 工单编号：{_display_work_order_value(order, 'work_order_no', 'workOrderNo', 'orderNo')}",
-            f"- 巡检内容：{_display_work_order_value(order, 'work_content', 'workContent')}",
-            f"- 巡检方式：{method}",
-            "- 起止时间："
-            f"{_display_work_order_time(_first_present(order, 'start_date', 'startDate'))} 至 "
-            f"{_display_work_order_time(_first_present(order, 'end_date', 'endDate'))}",
-        ])
-    lines.extend([
-        "",
-        f"以上工单均属于临时计划“{plan_name}”，已全部创建完成。",
-    ])
-    return "\n".join(lines)
-
-
-def _display_work_order_method(order: dict[str, Any]) -> str:
-    value = str(_first_present(order, "inspection_method", "inspectionMethod") or "")
-    normalized = value.lower()
-    if normalized == "dock" or "机场" in value:
-        return "固定机场"
-    if normalized == "drone" or "无人机" in value:
-        return "无人机"
-    return value or "巡检"
-
-
-def _display_work_order_value(order: dict[str, Any], *keys: str) -> str:
-    value = _first_present(order, *keys)
-    return str(value) if value not in (None, "") else "-"
-
-
-def _display_work_order_time(value: Any) -> str:
-    if value in (None, ""):
-        return "-"
-    return str(value).replace("T", " ")
-
-
-def _rows_from_text2sql_result(result: dict[str, Any]) -> list[dict[str, Any]]:
-    data = result.get("data")
-    rows = _find_rows(data)
-    return [row for row in rows if isinstance(row, dict)]
-
-
-def _complete_plan_object(item: dict[str, Any]) -> bool:
-    return all(
-        not (item.get(key) is None or (isinstance(item.get(key), str) and item.get(key).strip() == ""))
-        for key in ("deviceGuid", "deviceName", "major", "parentDeviceGuid", "parentDeviceName")
-    )
-
-
-def _find_rows(value: Any) -> list[Any]:
-    if isinstance(value, list):
-        return value
-    if not isinstance(value, dict):
-        return []
-    for key in ("rows", "records", "list"):
-        rows = value.get(key)
-        if isinstance(rows, list):
-            return rows
-    data = value.get("data")
-    if data is not value:
-        nested = _find_rows(data)
-        if nested:
-            return nested
-    result = value.get("result")
-    if result is not value:
-        nested = _find_rows(result)
-        if nested:
-            return nested
-    return []
-
-
-def _requested_tower_count(ranges: str) -> int | None:
-    text = (ranges or "").strip()
-    if not text or text in {"全部", "所有", "ALL", "all"}:
-        return None
-
-    range_match = re.search(r"(\d+)\s*(?:-|~|到|至)\s*(\d+)", text)
-    if range_match:
-        start = int(range_match.group(1))
-        end = int(range_match.group(2))
-        if start > end:
-            start, end = end, start
-        return end - start + 1
-
-    numbers = [int(value) for value in re.findall(r"\d+", text)]
-    if not numbers:
-        return None
-    return len(set(numbers))
-
-
-def _tower_range_invalid_message(
-    parent_device_name: str,
-    ranges: str,
-    rows: list[dict[str, Any]],
-) -> str | None:
-    requested_count = _requested_tower_count(ranges)
-    if requested_count is None or requested_count <= len(rows):
-        return None
-
-    suggestion = f"是否需要帮您指定巡检1-{len(rows)}号杆塔，" if rows else ""
-    return (
-        f"{parent_device_name} 线路下仅查询到 {len(rows)} 基符合条件的杆塔，"
-        f"少于您输入的范围“{ranges}”对应的 {requested_count} 基杆塔。"
-        f"{suggestion}或者请您重新输入需要巡检的有效杆塔范围。"
-    )
-
-
-def _error(code: str, message: str) -> dict[str, Any]:
-    return {"ok": False, "errorCode": code, "error": message, "retryable": code == "upstream_error"}

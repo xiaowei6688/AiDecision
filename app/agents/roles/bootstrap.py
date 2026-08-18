@@ -7,10 +7,9 @@ from app.agents.roles.common.requirements_analyst import (
 
 
 def build_role_subagents(model: BaseChatModel) -> list[SubAgent]:
-    """Build subagents used by the main orchestrator.
+    """构建主编排 Agent 使用的子 Agent。
 
-    Business Agents are registered by production integrations and orchestrated
-    separately; only common role SubAgents belong in this list.
+    业务 Agent 由生产环境集成注册并单独编排；此列表只包含通用角色子 Agent。
     """
 
     return [

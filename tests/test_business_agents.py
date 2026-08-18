@@ -34,6 +34,20 @@ def test_disabled_plugin_is_not_registered() -> None:
     assert context.business_agent_registry.list() == []
 
 
+def test_empty_plugin_list_registers_no_business_plugins() -> None:
+    context = PluginContext()
+    IntegrationManager([]).register_context(context)
+
+    assert context.business_agent_registry.list() == []
+
+
+def test_plugin_wildcard_registers_discovered_business_plugins() -> None:
+    context = PluginContext()
+    IntegrationManager(["*"]).register_context(context)
+
+    assert context.business_agent_registry.contains("inspection")
+
+
 def test_plugin_contexts_are_isolated_per_application() -> None:
     inspection_context = PluginContext()
     IntegrationManager(["inspection"]).register_context(inspection_context)

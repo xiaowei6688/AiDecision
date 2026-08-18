@@ -1,4 +1,4 @@
-"""Reusable startup prefetch and periodic refresh lifecycle."""
+"""可复用的启动预取与定期刷新生命周期。"""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ class RefreshableResource(Protocol):
 
 
 class RefreshLifecycle:
-    """Prefetch one configured resource and keep it fresh in the background."""
+    """预取指定资源，并在后台持续刷新。"""
 
     def __init__(self, resource: RefreshableResource) -> None:
         self._resource = resource

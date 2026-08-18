@@ -1,5 +1,5 @@
-"""Business system integrations.
+"""业务系统集成。
 
-Each subpackage owns one external business system: actions, checks and adapter.
-The application discovers only each package's bundle contract, not individual systems.
+每个子包负责一个外部业务系统，包括动作、检查和适配器。
+应用只发现各子包的 bundle 契约，不直接感知具体业务系统。
 """

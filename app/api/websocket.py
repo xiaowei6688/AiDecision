@@ -1,4 +1,4 @@
-"""WebSocket chat endpoint."""
+"""WebSocket 对话接口。"""
 
 import json
 import logging

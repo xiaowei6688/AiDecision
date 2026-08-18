@@ -1,4 +1,4 @@
-"""API schemas for chat, DST state, and human-in-the-loop events."""
+"""对话、DST 状态和人在回路事件的 API 数据结构。"""
 
 from enum import StrEnum
 from typing import Any, Literal

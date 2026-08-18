@@ -1,8 +1,7 @@
-"""Generic plugin contracts for business integrations.
+"""业务集成使用的通用插件契约。
 
-An integration bundle is the framework's plugin boundary.  Business code may
-register capabilities here, but the core runtime only sees registries and
-protocol-compatible callbacks.
+集成 bundle 是框架的插件边界。业务代码可以在此注册能力，但核心运行时
+只能感知注册表和符合协议的回调。
 """
 
 from __future__ import annotations
@@ -16,12 +15,12 @@ from app.integrations.context import PluginContext
 
 
 class PluginBundle(Protocol):
-    """Primary contract implemented by every business plugin."""
+    """所有业务插件都必须实现的主契约。"""
 
     name: str
 
     def register_context(self, context: PluginContext) -> Sequence[APIRouter]:
-        """Register all capabilities into one application-scoped context."""
+        """将全部能力注册到同一个应用级上下文。"""
 
     async def startup(self) -> None:
         ...

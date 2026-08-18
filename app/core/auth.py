@@ -52,8 +52,7 @@ def _authenticate(
             roles=tuple(r.strip() for r in (roles_header or "").split(",") if r.strip()),
         )
 
-    # A real deployment should replace this with JWT/SSO verification. These
-    # headers are intentionally accepted only in development.
+    # 实际部署应替换为 JWT/SSO 校验；这些请求头仅允许在开发环境中使用。
     if settings.environment == "development" and not authorization:
         return AuthContext(
             user_id=user_id or "dev-user",
@@ -64,8 +63,7 @@ def _authenticate(
         if http:
             raise HTTPException(status_code=401, detail="Authentication required")
         raise ValueError("Authentication required")
-    # Token verification is deployment-specific; do not treat its contents as
-    # identity until a verifier is configured.
+    # Token 校验方式取决于部署环境；配置校验器前不得将其内容视为身份信息。
     if http:
         raise HTTPException(status_code=501, detail="Bearer token verifier is not configured")
     raise ValueError("Bearer token verifier is not configured")

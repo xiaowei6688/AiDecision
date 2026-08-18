@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Runtime settings."""
+    """运行时配置。"""
 
     model_config = SettingsConfigDict(
         env_file=".env",

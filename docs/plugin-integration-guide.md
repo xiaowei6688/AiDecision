@@ -503,10 +503,16 @@ class InventoryCredential:
 ENABLED_INTEGRATIONS=["inspection", "inventory"]
 ```
 
-空列表表示加载所有已发现插件：
+空列表表示不加载任何业务插件：
 
 ```env
 ENABLED_INTEGRATIONS=[]
+```
+
+仅在本地开发需要自动加载所有已发现插件时使用：
+
+```env
+ENABLED_INTEGRATIONS=["*"]
 ```
 
 插件未启用时，它的 Agent、工具、动作、路由和事件 handler 都不会注册到当前应用。

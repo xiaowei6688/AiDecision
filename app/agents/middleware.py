@@ -14,7 +14,7 @@ SUMMARY_HEADER = "以下是更早对话的压缩摘要（供参考，不要重�
 
 
 class DirectResultMiddleware(AgentMiddleware):
-    """Forward framework-declared tool results without another model call."""
+    """无需再次调用模型，直接转发框架声明的工具结果。"""
 
     name = "direct_result"
 
@@ -71,7 +71,7 @@ class DirectResultMiddleware(AgentMiddleware):
 
 
 class BusinessContinuationMiddleware(AgentMiddleware):
-    """Force a plugin-routed continuation through its declared Business Agent."""
+    """强制插件路由的续接流程通过其声明的业务 Agent 执行。"""
 
     name = "business_continuation"
 
@@ -152,7 +152,7 @@ class SummaryInjectionMiddleware(AgentMiddleware):
 
 
 class ConfirmationProtocolMiddleware(AgentMiddleware):
-    """Retry final-text action confirmations through the structured action tool."""
+    """通过结构化动作工具重试最终文本中的动作确认。"""
 
     name = "confirmation_protocol"
 

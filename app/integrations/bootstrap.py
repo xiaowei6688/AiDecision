@@ -11,12 +11,16 @@ from app.integrations.context import PluginContext
 
 
 class IntegrationManager:
-    """Discover and activate business plugins at the application boundary."""
+    """在应用边界发现并启用业务插件。"""
     def __init__(self, enabled_integrations: list[str] | None = None) -> None:
-        self._enabled = {name for name in (enabled_integrations or []) if name}
+        self._enabled = {
+            name.strip()
+            for name in (enabled_integrations or [])
+            if isinstance(name, str) and name.strip()
+        }
 
     def register_context(self, context: PluginContext) -> list[APIRouter]:
-        """Register every enabled plugin capability into one app context."""
+        """将所有已启用的插件能力注册到同一个应用上下文。"""
 
         routers: list[APIRouter] = []
         for bundle in self._discover_enabled_bundles():
@@ -37,7 +41,7 @@ class IntegrationManager:
 
     def _discover_enabled_bundles(self) -> Iterable[PluginBundle]:
         for bundle in self._discover_bundles():
-            if self._enabled and bundle.name not in self._enabled:
+            if "*" not in self._enabled and bundle.name not in self._enabled:
                 continue
             yield bundle
 
@@ -49,7 +53,9 @@ class IntegrationManager:
             bundle_module_name = f"{package.__name__}.{module_info.name}.bundle"
             try:
                 bundle_module = importlib.import_module(bundle_module_name)
-            except ModuleNotFoundError:
+            except ModuleNotFoundError as exc:
+                if exc.name != bundle_module_name:
+                    raise
                 continue
             bundle = getattr(bundle_module, "bundle", None)
             if bundle is not None:

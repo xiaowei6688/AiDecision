@@ -46,7 +46,7 @@ def merge_dict_state(
     previous: dict[str, Any] | None,
     update: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Apply a shallow patch so independent tools do not erase known facts."""
+    """应用浅层补丁，避免相互独立的工具清除已知事实。"""
 
     return {**(previous or {}), **(update or {})}
 
