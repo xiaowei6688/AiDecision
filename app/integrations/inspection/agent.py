@@ -44,6 +44,8 @@ createPlan 成功 actionResult 是工单流程入口，必须继续完成计划�
 计划确认前必须先取得真实 planObjectList；工单确认前必须先取得计划详情和工单填充状态。
 用户提供任何相对日期或自然语言日期时，必须先调用 compute_datetime 核对日期；取得 planObjectList 后，
 必须调用 inspection_build_plan_fill_state，并把用户原始时间表达（例如“明天”）原样传入 time_expression。
+如果 inspection_query_device_data 返回 planObjectListRef，不要自行重建或展开列表，直接传入
+plan_object_ref（或省略 plan_object_list），由工具从当前请求上下文取回真实数据。
 计划确认与建议动作参数必须直接使用其 executePayload，禁止自行计算日期、填写中文 planType 或自由编写 planName。
 字段已经齐备时，不要继续重复查询或追问普通信息，应建议对应的 inspection action；主 Agent 调用
 call_business_action 后由统一执行器产生最终确认，禁止额外建议 request_human_input。

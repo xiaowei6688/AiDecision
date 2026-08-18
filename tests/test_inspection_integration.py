@@ -14,6 +14,7 @@ from app.integrations.inspection.notifications import (
 )
 from app.integrations.inspection.checks import valid_time_window
 from app.integrations.inspection.models import CreateInspectionPlanInput, CreateInspectionWorkOrderInput
+from app.core.runtime_context import RequestRuntimeContext, reset_runtime_context, set_runtime_context
 from app.integrations.inspection.adapter import InspectionAdapter
 from app.integrations.inspection.config import InspectionSettings
 from app.integrations.inspection.ui import (
@@ -1095,13 +1096,75 @@ def test_inspection_query_device_data_uses_legacy_question_and_maps_rows(monkeyp
         "datasource": "inspection_mysql",
         "question": "查询10kV十九线线路下#3的杆塔uid、杆塔名称、杆塔专业、线路uid、线路名称",
     }]
-    assert result["planObjectList"] == [{
-        "deviceGuid": "tower-guid-3",
-        "deviceName": "10kV十九线#3",
-        "major": "tms",
-        "parentDeviceGuid": "line-guid-19",
-        "parentDeviceName": "10kV十九线",
+    assert result["planObjectListRef"] == "current_query_result"
+    assert result["count"] == 1
+    assert result["planObjectListNames"] == ["10kV十九线#3"]
+
+
+def test_inspection_large_device_query_keeps_objects_out_of_model_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Client:
+        def query(self, *, datasource: str, question: str) -> dict[str, object]:
+            return {
+                "status": "success",
+                "data": {"rows": [{
+                    "tower_guid": f"tower-{index}",
+                    "basic_tower_ledger_name": f"杆塔{index}",
+                    "major": "dms",
+                    "line_guid": "line-1",
+                    "basic_line_ledger_name": "线路1",
+                } for index in range(1, 91)]},
+            }
+
+    monkeypatch.setattr(
+        "app.integrations.inspection.workflows.TextToSqlClient",
+        lambda *args: Client(),
+    )
+    token = set_runtime_context(RequestRuntimeContext(session_id="session-1", metadata={}))
+    try:
+        result = inspection_query_device_data.invoke({"parent_device_name": "线路1"})
+        assert result["count"] == 90
+        assert "planObjectList" not in result
+        assert result["planObjectListRef"] == "current_query_result"
+
+        fill_state = inspection_build_plan_fill_state.invoke({
+            "plan_type": "5",
+            "plan_object_ref": "current_query_result",
+            "inspect_start_time": "2026-08-18 08:00:00",
+            "inspect_end_time": "2026-08-18 10:00:00",
+        })
+        assert fill_state["ok"] is True
+        assert len(fill_state["executePayload"]["planObjectList"]) == 90
+    finally:
+        reset_runtime_context(token)
+
+
+def test_inspection_plan_fill_state_uses_cached_objects_when_model_stringifies_list() -> None:
+    cached = [{
+        "deviceGuid": "tower-1",
+        "deviceName": "10kV白路线#1",
+        "major": "dms",
+        "parentDeviceGuid": "line-1",
+        "parentDeviceName": "10kV白路线",
     }]
+    token = set_runtime_context(
+        RequestRuntimeContext(
+            session_id="session-1",
+            metadata={"_inspection_current_plan_objects": cached},
+        )
+    )
+    try:
+        result = inspection_build_plan_fill_state.invoke({
+            "plan_type": "临时巡检",
+            "plan_object_list": '[{"deviceGuid":"fake-name","parentDeviceGuid":"fake-line"}]',
+            "inspect_start_time": "2026-08-23 00:00:00",
+            "inspect_end_time": "2026-08-23 23:59:59",
+        })
+        assert result["ok"] is True
+        assert result["executePayload"]["planObjectList"] == cached
+    finally:
+        reset_runtime_context(token)
 
 
 @pytest.mark.asyncio

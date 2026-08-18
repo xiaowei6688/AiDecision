@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Annotated, Any
 
-from langchain_core.tools import tool
+from langchain_core.tools import InjectedToolArg, tool
 from pydantic import BaseModel, field_validator, ValidationError
 
 from app.integrations.inspection.models import (
@@ -15,6 +15,7 @@ from app.integrations.inspection.models import (
 )
 from app.adapters.text_to_sql import TextToSqlClient
 from app.core.config import get_settings
+from app.core.runtime_context import get_runtime_context
 from app.integrations.inspection.allcore_auth import (
     InspectionAllCoreAuthError,
     get_inspection_allcore_auth_client,
@@ -50,6 +51,9 @@ from app.integrations.inspection.work_order_summary import (
     work_order_final_summary as _work_order_final_summary,
 )
 from app.tools.datetime_tool import resolve_datetime_expression
+
+
+_CURRENT_PLAN_OBJECTS_KEY = "_inspection_current_plan_objects"
 
 
 @tool
@@ -112,28 +116,56 @@ def inspection_query_device_data(parent_device_name: str, ranges: str = "全部"
             "skippedRows": skipped_rows,
         }
 
+    runtime = get_runtime_context()
+    if runtime.session_id:
+        runtime.metadata[_CURRENT_PLAN_OBJECTS_KEY] = plan_object_list
     return {
         "ok": True,
         "lineName": parent_name,
         "ranges": normalized_ranges,
         "question": question,
-        "rows": rows,
-        "planObjectList": plan_object_list,
+        "planObjectListRef": "current_query_result",
         "count": len(plan_object_list),
-        "skippedRows": skipped_rows,
-        "summary": f"已获取 {len(plan_object_list)} 条杆塔数据，创建计划时请直接使用 planObjectList。",
+        "planObjectListNames": [item["deviceName"] for item in plan_object_list],
+        "skippedCount": len(skipped_rows),
+        "summary": (
+            f"已获取 {len(plan_object_list)} 条杆塔数据。完整 planObjectList 已保存在当前请求中，"
+            "请直接调用 inspection_build_plan_fill_state 组装计划。"
+        ),
     }
 
 
 @tool
 def inspection_build_plan_fill_state(
     plan_type: str,
-    plan_object_list: list[dict[str, Any]],
+    # 旧调用方仍可传入该参数，但不把大列表暴露给模型生成。
+    plan_object_list: Annotated[
+        list[dict[str, Any]] | str | None,
+        InjectedToolArg,
+    ] = None,
     time_expression: str | None = None,
     inspect_start_time: str | None = None,
     inspect_end_time: str | None = None,
+    plan_object_ref: str | None = None,
 ) -> dict[str, Any]:
     """按规则组装计划；自然语言时间存在时以确定性解析结果为准。"""
+
+    cached_plan_objects = get_runtime_context().metadata.get(_CURRENT_PLAN_OBJECTS_KEY)
+    if isinstance(cached_plan_objects, list) and (
+        plan_object_ref in (None, "", "current_query_result")
+        or isinstance(plan_object_list, str)
+    ):
+        plan_object_list = cached_plan_objects
+    elif plan_object_list is not None:
+        try:
+            plan_object_list = _coerce_list_argument(plan_object_list, "plan_object_list")
+        except (TypeError, ValueError) as exc:
+            return _error("invalid_plan_objects", str(exc))
+    if not isinstance(plan_object_list, list) or not plan_object_list:
+        return _error(
+            "missing_plan_objects",
+            "缺少已查询的真实 planObjectList，请先调用 inspection_query_device_data。",
+        )
 
     if isinstance(time_expression, str) and time_expression.strip():
         try:
