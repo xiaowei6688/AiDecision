@@ -24,7 +24,12 @@ inspection_agent = BusinessAgentManifest(
    禁止把两组杆塔合并到同一张工单。
 3. 调用 inspection_build_work_order_fill_state 时，收到过 createTempOrder 成功回执的组必须放入
    completed_groups；但必须先用回执中的 workOrderId 调用 inspection_query_work_order_detail，确认真实入库后
-   才能把该组标记为已完成。工具返回 COMPLETED 时结束，不再建议创建动作。
+   才能把该组标记为已完成。校验结果会查询该计划已成功创建的全部工单，并返回累计的 plan、planGuid 和
+   completedGroups；随后必须按 planGuid 重新调用
+   inspection_query_coverage，并把校验结果中的 plan、覆盖数据和 completedGroups 原样传给
+   inspection_build_work_order_fill_state。还必须把校验结果中的 createdWorkOrders 原样传给该工具。
+   工具返回 READY 时只确认下一张工单；返回 COMPLETED 时明确告诉用户
+   “全部巡检工单已创建完成”，并结束流程，不再建议创建动作。
 4. uncovered 组必须先调用 inspection_query_work_order_resources，使用其 suggestedEquipSn 和
    suggestedFlightWorkers，禁止自行编造无人机序列号或飞手 ID。
 5. 工单参数必须直接使用 inspection_build_work_order_fill_state.executePayload，不得自行删减字段。

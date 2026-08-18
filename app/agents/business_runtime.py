@@ -10,7 +10,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from app.agents.business_agents import BusinessAdvice, BusinessAgentManifest, parse_business_advice
 from app.tools.broker import ToolAuditRecord, ToolBroker, ToolBrokerRequest
-from app.integrations.direct_results import DirectActionResult
+from app.integrations.direct_results import DirectResult
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,7 @@ class BusinessAgentInvocation:
 class BusinessAgentRunResult:
     advice: BusinessAdvice | None = None
     tool_audit: tuple[ToolAuditRecord, ...] = ()
-    direct_result: DirectActionResult | None = None
+    direct_result: DirectResult | None = None
 
 
 class BusinessAgentRuntime(Protocol):

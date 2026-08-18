@@ -159,6 +159,63 @@ def test_inspection_work_orders_are_split_and_advanced_one_group_at_a_time() -> 
     assert second["executePayload"]["flightWorkers"] == ["worker-1"]
     assert [item["deviceGuid"] for item in second["executePayload"]["orderDetailList"]] == ["tower-2"]
 
+    completed = inspection_build_work_order_fill_state.invoke({
+        "plan": plan,
+        "coverage_rows": rows,
+        "completed_groups": ["covered", "uncovered"],
+        "created_work_orders": [
+            {
+                "id": "order-covered",
+                "work_order_no": "AL-20260818-001",
+                "work_content": "10kV白路线固定机场巡检，共1基杆塔",
+                "inspection_method": "dock",
+                "start_date": "2026-08-18T00:00:00",
+                "end_date": "2026-08-18T23:59:59",
+            },
+            {
+                "id": "order-uncovered",
+                "work_order_no": "AL-20260818-002",
+                "work_content": "10kV白路线无人机巡检，共1基杆塔",
+                "inspection_method": "drone",
+                "start_date": "2026-08-18T00:00:00",
+                "end_date": "2026-08-18T23:59:59",
+            },
+        ],
+    })
+
+    assert completed["ok"] is True
+    assert completed["workOrderFillState"]["status"] == "COMPLETED"
+    assert completed["workOrderFillState"]["pendingWorkOrderGroups"] == []
+    assert completed["workOrderFillState"]["executePayload"] is None
+    assert completed["summary"] == "该计划的巡检工单已全部创建完成。"
+    assert completed["finalSummary"] == (
+        "已成功创建全部巡检工单，具体信息如下：\n\n"
+        "### 工单 1｜固定机场工单\n"
+        "- 工单编号：AL-20260818-001\n"
+        "- 巡检内容：10kV白路线固定机场巡检，共1基杆塔\n"
+        "- 巡检方式：固定机场\n"
+        "- 起止时间：2026-08-18 00:00:00 至 2026-08-18 23:59:59\n\n"
+        "### 工单 2｜无人机工单\n"
+        "- 工单编号：AL-20260818-002\n"
+        "- 巡检内容：10kV白路线无人机巡检，共1基杆塔\n"
+        "- 巡检方式：无人机\n"
+        "- 起止时间：2026-08-18 00:00:00 至 2026-08-18 23:59:59\n\n"
+        "以上工单均属于临时计划“临时计划-白路线巡检”，已全部创建完成。"
+    )
+    direct = inspection_work_order_direct_action(completed)
+    assert direct is not None
+    assert direct.model_dump() == {
+        "kind": "message",
+        "message": completed["finalSummary"],
+        "data": {
+            "status": "COMPLETED",
+            "summary": "该计划的巡检工单已全部创建完成。",
+            "workOrderCount": 2,
+            "towerCount": 2,
+            "planName": "临时计划-白路线巡检",
+        },
+    }
+
 
 def test_inspection_uncovered_work_order_requires_real_resources() -> None:
     result = inspection_build_work_order_fill_state.invoke({

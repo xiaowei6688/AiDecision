@@ -468,7 +468,7 @@ def test_inspection_plan_plain_resume_does_not_fake_action_result() -> None:
     assert projected["error_code"] == "ACTION_RESULT_REQUIRED"
 
 
-def test_inspection_work_order_approve_completes_without_action_result() -> None:
+def test_inspection_work_order_approve_waits_for_action_result() -> None:
     projected = inspection_frontend_callback_resume_projection(
         {
             "status": "requires_confirmation",
@@ -483,10 +483,10 @@ def test_inspection_work_order_approve_completes_without_action_result() -> None
         },
     )
 
-    assert projected["status"] == "success"
-    assert projected["data"]["confirmationOnly"] is True
-    assert projected["data"]["completedWorkOrderGroup"] == "covered"
-    assert projected["data"]["final"] is True
+    assert projected["status"] == "updated"
+    assert projected["data"]["awaitingActionResult"] is True
+    assert projected["data"]["final"] is False
+    assert "actionResult" in projected["message"]
 
 
 def test_inspection_work_order_rejects_wrong_action_result_code() -> None:
@@ -819,9 +819,26 @@ def test_inspection_verifies_created_work_order_with_integration_datasource(
 
         def query(self, datasource: str, question: str) -> dict[str, object]:
             calls.append({"datasource": datasource, "question": question})
+            if "已创建成功的所有巡检工单" in question:
+                return {
+                    "status": "success",
+                    "data": {"rows": [{
+                        "id": "order-1",
+                        "inspection_method": "dock",
+                    }]},
+                }
             return {
                 "status": "success",
-                "data": {"rows": [{"work_order_no": "WO-1", "status": "created"}]},
+                "data": {"rows": [{
+                    "work_order_no": "WO-1",
+                    "status": "created",
+                    "inspection_method": "dock",
+                    "plan_guid": "plan-guid-1",
+                    "plan_name": "白路线巡检",
+                    "plan_type": "5",
+                    "inspect_start_time": "2026-08-18 08:00:00",
+                    "inspect_end_time": "2026-08-18 18:00:00",
+                }]},
             }
 
     monkeypatch.setattr(
@@ -837,8 +854,71 @@ def test_inspection_verifies_created_work_order_with_integration_datasource(
 
     assert result["ok"] is True
     assert result["workOrder"]["work_order_no"] == "WO-1"
+    assert result["planGuid"] == "plan-guid-1"
+    assert result["completedGroups"] == ["covered"]
+    assert result["createdWorkOrders"] == [{
+        "id": "order-1",
+        "inspection_method": "dock",
+        "work_order_no": "WO-1",
+        "status": "created",
+        "plan_guid": "plan-guid-1",
+        "plan_name": "白路线巡检",
+        "plan_type": "5",
+        "inspect_start_time": "2026-08-18 08:00:00",
+        "inspect_end_time": "2026-08-18 18:00:00",
+    }]
+    assert result["plan"] == {
+        "planGuid": "plan-guid-1",
+        "planName": "白路线巡检",
+        "planType": "5",
+        "inspectStartTime": "2026-08-18 08:00:00",
+        "inspectEndTime": "2026-08-18 18:00:00",
+    }
     assert calls[0]["datasource"] == "inspection_mysql"
     assert "id=order-1" in calls[0]["question"]
+    assert "关联计划guid" in calls[0]["question"]
+    assert calls[1]["datasource"] == "inspection_mysql"
+    assert "plan_guid=plan-guid-1" in calls[1]["question"]
+
+
+def test_inspection_work_order_verification_accumulates_all_completed_groups(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def query(self, datasource: str, question: str) -> dict[str, object]:
+            if "已创建成功的所有巡检工单" in question:
+                rows = [
+                    {"id": "order-covered", "inspection_method": "dock"},
+                    {"id": "order-uncovered", "inspection_method": "drone"},
+                ]
+            else:
+                rows = [{
+                    "work_order_no": "WO-2",
+                    "inspection_method": "drone",
+                    "plan_guid": "plan-guid-1",
+                    "plan_type": "5",
+                    "inspect_start_time": "2026-08-18 08:00:00",
+                    "inspect_end_time": "2026-08-18 18:00:00",
+                }]
+            return {"status": "success", "data": {"rows": rows}}
+
+    monkeypatch.setattr(
+        "app.integrations.inspection.workflows.get_inspection_settings",
+        lambda: InspectionSettings(
+            _env_file=None,
+            text_to_sql_datasource="inspection_mysql",
+        ),
+    )
+    monkeypatch.setattr("app.integrations.inspection.workflows.TextToSqlClient", FakeClient)
+
+    result = inspection_query_work_order_detail.invoke({"order_id": "order-uncovered"})
+
+    assert result["ok"] is True
+    assert result["completedGroup"] == "uncovered"
+    assert result["completedGroups"] == ["covered", "uncovered"]
 
 
 def test_inspection_query_device_data_uses_legacy_question_and_maps_rows(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -10,7 +10,7 @@ from uuid import uuid4
 from app.core.progress import get_progress_channel
 from app.core.runtime_context import get_runtime_context
 from app.integrations.tools import IntegrationToolRegistry
-from app.integrations.direct_results import DirectActionResult
+from app.integrations.direct_results import DirectResult
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ class ToolAuditRecord:
 class ToolBrokerResult:
     result: Any
     audit: ToolAuditRecord
-    direct_result: DirectActionResult | None = None
+    direct_result: DirectResult | None = None
 
 
 class ToolBroker:

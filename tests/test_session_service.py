@@ -565,6 +565,38 @@ def test_direct_action_failure_is_forwarded_without_internal_marker() -> None:
     assert "_framework" not in normalized["data"]
 
 
+def test_direct_message_is_forwarded_without_model_rewriting() -> None:
+    service = SessionService(agent=None)
+    summary = (
+        "已成功创建2个工单，属于临时计划“临时计划-白路线巡检”。"
+        "该计划下所有工单均已完整创建。共同覆盖10个杆塔。"
+    )
+    event = {
+        "messages": [ToolMessage(
+            content=json.dumps({
+                "status": "success",
+                "message": summary,
+                "data": {
+                    "status": "COMPLETED",
+                    "workOrderCount": 2,
+                    "towerCount": 10,
+                    "planName": "临时计划-白路线巡检",
+                },
+                "_framework": {"return_direct": True},
+            }, ensure_ascii=False),
+            tool_call_id="direct-message-1",
+        )]
+    }
+
+    normalized = service._normalize_event("session-1", event)
+
+    assert normalized["type"] == "message"
+    assert normalized["content"] == summary
+    assert normalized["data"]["data"]["workOrderCount"] == 2
+    assert normalized["data"]["data"]["towerCount"] == 10
+    assert "_framework" not in normalized["data"]
+
+
 def test_normalize_event_converts_task_progress_tool_result_to_thinking_step() -> None:
     service = SessionService(agent=None)
     tool_result = {

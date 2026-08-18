@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from collections.abc import Callable
 from typing import Any
 
-from app.integrations.direct_results import DirectActionResult
+from app.integrations.direct_results import DirectResult
 
 
 @dataclass(frozen=True)
@@ -22,7 +22,7 @@ class IntegrationToolRegistry:
         self._steps: dict[str, ToolStepDescription] = {}
         self._direct_result_projectors: dict[
             str,
-            Callable[[Any], DirectActionResult | None],
+            Callable[[Any], DirectResult | None],
         ] = {}
 
     def register(self, value: Any, *, read_only: bool = False) -> None:
@@ -46,7 +46,7 @@ class IntegrationToolRegistry:
     def register_direct_result(
         self,
         tool_name: str,
-        projector: Callable[[Any], DirectActionResult | None],
+        projector: Callable[[Any], DirectResult | None],
     ) -> None:
         if tool_name not in self._tools:
             raise ValueError(f"unknown plugin tool: {tool_name}")
@@ -58,7 +58,7 @@ class IntegrationToolRegistry:
         self,
         tool_name: str,
         result: Any,
-    ) -> DirectActionResult | None:
+    ) -> DirectResult | None:
         projector = self._direct_result_projectors.get(tool_name)
         return projector(result) if projector is not None else None
 

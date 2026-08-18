@@ -15,6 +15,7 @@ from app.agents.business_runtime import BusinessAgentInvocation, build_business_
 from app.tools.base_tool import AGENT_TOOLS
 from app.integrations.context import PluginContext
 from app.core.runtime_context import get_runtime_context
+from app.integrations.direct_results import DirectActionResult, DirectMessageResult
 
 
 def build_agent_tools(
@@ -267,6 +268,16 @@ async def _consult_business_agent(
         }
     if run_result.direct_result is not None:
         direct_result = run_result.direct_result
+        if isinstance(direct_result, DirectMessageResult):
+            return {
+                "business_id": agent.business_id,
+                "title": agent.title,
+                "status": "success",
+                "message": direct_result.message,
+                "data": direct_result.data or {},
+                "_framework": {"return_direct": True},
+                "tool_audit": [record.model_dump() for record in run_result.tool_audit],
+            }
         if not any(
             direct_result.action_id.startswith(prefix)
             for prefix in agent.action_prefixes

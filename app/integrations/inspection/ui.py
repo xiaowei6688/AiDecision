@@ -148,20 +148,16 @@ def inspection_frontend_callback_resume_projection(
         else None
     )
 
-    # The legacy work-order flow treats the user's approve resume as the
-    # completion signal; an actionResult is optional for clients that still
-    # perform the frontend callback and return its business ID.
     if action_result_code is None:
         return {
-            "status": "success",
-            "message": resume_value.get("content") or "已确认创建巡检工单。",
+            "status": "updated",
+            "message": "已确认创建巡检工单，请前端完成创建后回传 actionResult。",
             "data": {
                 "pendingAction": pending_payload,
                 "frontendResult": data,
-                "createdWorkOrderId": None,
-                "completedWorkOrderGroup": completed_group,
-                "confirmationOnly": True,
-                "final": True,
+                "awaitingActionResult": True,
+                "final": False,
+                "nextUserAction": "调用 /order/createTempOrder 后回传包含工单 ID 的 actionResult。",
             },
         }
 

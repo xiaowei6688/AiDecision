@@ -40,10 +40,11 @@ def inspection_query_device_data(parent_device_name: str, ranges: str = "全部"
     settings = get_settings()
     inspection_settings = get_inspection_settings()
     question = f"查询{parent_name}线路下{normalized_ranges}的杆塔uid、杆塔名称、杆塔专业、线路uid、线路名称"
-    result = TextToSqlClient(
+    client = TextToSqlClient(
         settings.text_to_sql_base_url,
         settings.text_to_sql_timeout_seconds,
-    ).query(
+    )
+    result = client.query(
         datasource=inspection_settings.text_to_sql_datasource,
         question=question,
     )
@@ -457,7 +458,7 @@ def inspection_query_work_order_resources() -> dict[str, Any]:
         import httpx
 
         drone_response = auth_client.request_with_retry_sync(
-            lambda headers: httpx.get(
+            lambda headers: httpx.post(
                 drone_url,
                 headers=headers,
                 timeout=settings.api_timeout_seconds,
@@ -501,14 +502,16 @@ def inspection_query_work_order_detail(order_id: str) -> dict[str, Any]:
         return _error("missing_input", "工单 ID 不能为空")
     settings = get_settings()
     inspection_settings = get_inspection_settings()
-    result = TextToSqlClient(
+    client = TextToSqlClient(
         settings.text_to_sql_base_url,
         settings.text_to_sql_timeout_seconds,
-    ).query(
+    )
+    result = client.query(
         datasource=inspection_settings.text_to_sql_datasource,
         question=(
             f"查询工单 id={normalized} 的工单编号、工单内容、工单状态、巡检方式、"
-            "专业、开始时间、结束时间和作业对象数量"
+            "专业、开始时间、结束时间、作业对象数量、关联计划guid、计划名称、"
+            "计划类型、计划巡检开始时间和计划巡检结束时间"
         ),
     )
     if result.get("status") != "success":
@@ -516,10 +519,70 @@ def inspection_query_work_order_detail(order_id: str) -> dict[str, Any]:
     rows = _rows_from_text2sql_result(result)
     if not rows:
         return _error("work_order_not_found", f"未查询到工单 ID {normalized} 的入库记录")
+    work_order = rows[0]
+    plan_guid = _first_present(work_order, "plan_guid", "planGuid")
+    inspection_method = str(
+        _first_present(work_order, "inspection_method", "inspectionMethod") or ""
+    ).lower()
+    completed_group = (
+        "covered"
+        if inspection_method == "dock"
+        else "uncovered"
+        if inspection_method == "drone"
+        else None
+    )
+    if not plan_guid:
+        return _error(
+            "work_order_plan_missing",
+            f"工单 ID {normalized} 已入库，但未查询到关联计划 GUID",
+        )
+    created_result = client.query(
+        datasource=inspection_settings.text_to_sql_datasource,
+        question=(
+            f"查询计划 plan_guid={plan_guid} 下已创建成功的所有巡检工单的"
+            "工单ID、工单编号、工单内容、巡检方式、开始时间和结束时间"
+        ),
+    )
+    if created_result.get("status") != "success":
+        return created_result
+    created_work_orders = _merge_created_work_orders(
+        _rows_from_text2sql_result(created_result),
+        {**work_order, "id": _first_present(work_order, "id", "workOrderId") or normalized},
+    )
+    completed_methods = {
+        str(_first_present(item, "inspection_method", "inspectionMethod") or "").lower()
+        for item in [work_order, *created_work_orders]
+    }
+    completed_groups = [
+        group
+        for group, method in (("covered", "dock"), ("uncovered", "drone"))
+        if method in completed_methods
+    ]
     return {
         "ok": True,
         "workOrderId": normalized,
-        "workOrder": rows[0],
+        "workOrder": work_order,
+        "planGuid": plan_guid,
+        "completedGroup": completed_group,
+        "completedGroups": completed_groups,
+        "createdWorkOrders": created_work_orders,
+        "plan": {
+            "planGuid": plan_guid,
+            "planName": _first_present(work_order, "plan_name", "planName"),
+            "planType": _first_present(work_order, "plan_type", "planType"),
+            "inspectStartTime": _first_present(
+                work_order,
+                "inspect_start_time",
+                "inspectStartTime",
+                "plan_inspect_start_time",
+            ),
+            "inspectEndTime": _first_present(
+                work_order,
+                "inspect_end_time",
+                "inspectEndTime",
+                "plan_inspect_end_time",
+            ),
+        },
         "summary": f"工单 ID {normalized} 已完成入库校验。",
     }
 
@@ -529,6 +592,7 @@ class InspectionWorkOrderFillArgs(BaseModel):
     coverage_rows: list[dict[str, Any]] | None = None
     group: str | None = None
     completed_groups: list[str] | None = None
+    created_work_orders: list[dict[str, Any]] | None = None
     equip_sn: str | None = None
     flight_workers: list[str] | None = None
 
@@ -537,10 +601,10 @@ class InspectionWorkOrderFillArgs(BaseModel):
     def decode_plan(cls, value: Any) -> dict[str, Any]:
         return _coerce_mapping_argument(value, "plan")
 
-    @field_validator("coverage_rows", mode="before")
+    @field_validator("coverage_rows", "created_work_orders", mode="before")
     @classmethod
-    def decode_coverage_rows(cls, value: Any) -> list[dict[str, Any]]:
-        return _coerce_list_argument(value, "coverage_rows")
+    def decode_object_lists(cls, value: Any, info: Any) -> list[dict[str, Any]]:
+        return _coerce_list_argument(value, info.field_name)
 
     @field_validator("completed_groups", "flight_workers", mode="before")
     @classmethod
@@ -554,6 +618,7 @@ def inspection_build_work_order_fill_state(
     coverage_rows: list[dict[str, Any]] | None = None,
     group: str | None = None,
     completed_groups: list[str] | None = None,
+    created_work_orders: list[dict[str, Any]] | None = None,
     equip_sn: str | None = None,
     flight_workers: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -566,6 +631,10 @@ def inspection_build_work_order_fill_state(
             completed_groups,
             "completed_groups",
         )
+        normalized_created_work_orders = _coerce_list_argument(
+            created_work_orders,
+            "created_work_orders",
+        )
     except (TypeError, ValueError) as exc:
         return _error("invalid_arguments", str(exc))
     grouped_rows = {
@@ -577,6 +646,13 @@ def inspection_build_work_order_fill_state(
     pending_groups = [name for name in all_groups if name not in completed]
     selected_group = group if group in pending_groups else (pending_groups[0] if pending_groups else None)
     if selected_group is None:
+        tower_count = len({
+            str(row.get("deviceGuid") or row.get("tower_guid") or row.get("tower_uid"))
+            for row in rows
+            if row.get("deviceGuid") or row.get("tower_guid") or row.get("tower_uid")
+        })
+        work_order_count = len(normalized_created_work_orders) or len(normalized_completed_groups)
+        plan_name = normalized_plan.get("planName") or normalized_plan.get("plan_name") or "-"
         return {
             "ok": True,
             "workOrderFillState": {
@@ -585,6 +661,13 @@ def inspection_build_work_order_fill_state(
                 "executePayload": None,
             },
             "summary": "该计划的巡检工单已全部创建完成。",
+            "finalSummary": _work_order_final_summary(
+                normalized_created_work_orders,
+                plan_name=plan_name,
+            ),
+            "workOrderCount": work_order_count,
+            "towerCount": tower_count,
+            "planName": plan_name,
         }
 
     details = [_row_to_detail(row) for row in grouped_rows[selected_group]]
@@ -814,6 +897,71 @@ def _first_present(value: dict[str, Any], *keys: str) -> Any:
         if candidate not in (None, ""):
             return candidate
     return None
+
+
+def _merge_created_work_orders(
+    created_work_orders: list[dict[str, Any]],
+    current_work_order: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Keep legacy-style per-order summaries while de-duplicating the current receipt."""
+
+    merged: dict[str, dict[str, Any]] = {}
+    for index, item in enumerate([*created_work_orders, current_work_order]):
+        identifier = _first_present(item, "id", "workOrderId", "work_order_id", "work_order_no")
+        key = str(identifier) if identifier not in (None, "") else f"row-{index}"
+        existing = merged.get(key, {})
+        merged[key] = {**existing, **{name: value for name, value in item.items() if value not in (None, "")}}
+    return list(merged.values())
+
+
+def _work_order_final_summary(
+    created_work_orders: list[dict[str, Any]],
+    *,
+    plan_name: str,
+) -> str:
+    """Render the legacy final work-order summary without involving the model."""
+
+    lines = [
+        "已成功创建全部巡检工单，具体信息如下：",
+    ]
+    for index, order in enumerate(created_work_orders, start=1):
+        method = _display_work_order_method(order)
+        lines.extend([
+            "",
+            f"### 工单 {index}｜{method}工单",
+            f"- 工单编号：{_display_work_order_value(order, 'work_order_no', 'workOrderNo', 'orderNo')}",
+            f"- 巡检内容：{_display_work_order_value(order, 'work_content', 'workContent')}",
+            f"- 巡检方式：{method}",
+            "- 起止时间："
+            f"{_display_work_order_time(_first_present(order, 'start_date', 'startDate'))} 至 "
+            f"{_display_work_order_time(_first_present(order, 'end_date', 'endDate'))}",
+        ])
+    lines.extend([
+        "",
+        f"以上工单均属于临时计划“{plan_name}”，已全部创建完成。",
+    ])
+    return "\n".join(lines)
+
+
+def _display_work_order_method(order: dict[str, Any]) -> str:
+    value = str(_first_present(order, "inspection_method", "inspectionMethod") or "")
+    normalized = value.lower()
+    if normalized == "dock" or "机场" in value:
+        return "固定机场"
+    if normalized == "drone" or "无人机" in value:
+        return "无人机"
+    return value or "巡检"
+
+
+def _display_work_order_value(order: dict[str, Any], *keys: str) -> str:
+    value = _first_present(order, *keys)
+    return str(value) if value not in (None, "") else "-"
+
+
+def _display_work_order_time(value: Any) -> str:
+    if value in (None, ""):
+        return "-"
+    return str(value).replace("T", " ")
 
 
 def _rows_from_text2sql_result(result: dict[str, Any]) -> list[dict[str, Any]]:
