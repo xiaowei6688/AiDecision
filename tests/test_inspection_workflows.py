@@ -93,6 +93,16 @@ def test_inspection_work_order_accepts_backslash_escaped_model_arguments() -> No
     ) == 1
 
 
+def test_inspection_work_order_schema_requires_structured_model_arguments() -> None:
+    schema = inspection_build_work_order_fill_state.args_schema.model_json_schema()
+
+    assert schema["properties"]["plan"]["type"] == "object"
+    coverage_schema = schema["properties"]["coverage_rows"]
+    assert {item["type"] for item in coverage_schema["anyOf"]} == {"array", "null"}
+    completed_schema = schema["properties"]["completed_groups"]
+    assert {item["type"] for item in completed_schema["anyOf"]} == {"array", "null"}
+
+
 def test_inspection_work_orders_are_split_and_advanced_one_group_at_a_time() -> None:
     plan = {
         "planGuid": "plan-1",

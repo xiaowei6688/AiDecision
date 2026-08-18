@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 from langchain_core.tools import tool
-from pydantic import ValidationError
+from pydantic import BaseModel, field_validator, ValidationError
 
 from app.integrations.inspection.models import (
     CreateInspectionPlanInput,
@@ -524,14 +524,38 @@ def inspection_query_work_order_detail(order_id: str) -> dict[str, Any]:
     }
 
 
-@tool
+class InspectionWorkOrderFillArgs(BaseModel):
+    plan: dict[str, Any]
+    coverage_rows: list[dict[str, Any]] | None = None
+    group: str | None = None
+    completed_groups: list[str] | None = None
+    equip_sn: str | None = None
+    flight_workers: list[str] | None = None
+
+    @field_validator("plan", mode="before")
+    @classmethod
+    def decode_plan(cls, value: Any) -> dict[str, Any]:
+        return _coerce_mapping_argument(value, "plan")
+
+    @field_validator("coverage_rows", mode="before")
+    @classmethod
+    def decode_coverage_rows(cls, value: Any) -> list[dict[str, Any]]:
+        return _coerce_list_argument(value, "coverage_rows")
+
+    @field_validator("completed_groups", "flight_workers", mode="before")
+    @classmethod
+    def decode_string_lists(cls, value: Any, info: Any) -> list[str]:
+        return _coerce_string_list_argument(value, info.field_name)
+
+
+@tool(args_schema=InspectionWorkOrderFillArgs)
 def inspection_build_work_order_fill_state(
-    plan: dict[str, Any] | str,
-    coverage_rows: list[dict[str, Any]] | str | None = None,
+    plan: dict[str, Any],
+    coverage_rows: list[dict[str, Any]] | None = None,
     group: str | None = None,
-    completed_groups: list[str] | str | None = None,
+    completed_groups: list[str] | None = None,
     equip_sn: str | None = None,
-    flight_workers: list[str] | str | None = None,
+    flight_workers: list[str] | None = None,
 ) -> dict[str, Any]:
     """按机场覆盖拆分工单，每次仅组装待创建队列中的一个工单。"""
 

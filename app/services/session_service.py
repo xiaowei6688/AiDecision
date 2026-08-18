@@ -759,6 +759,7 @@ class SessionService:
         normalized = tool_name.replace("-", "_").lower()
         return self._is_human_input_tool(normalized) or normalized in {
             "call_business_action",
+            "continue_business_workflow",
             "update_task_progress",
             "update_dialogue_state",
             "write_todos",

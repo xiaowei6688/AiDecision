@@ -172,6 +172,46 @@ class InternalAndBusinessToolAgent:
         return type("Snapshot", (), {"values": {}})()
 
 
+class ContinuationAndBusinessToolAgent:
+    async def astream(self, payload: dict[str, Any], **kwargs: Any):
+        yield {
+            "messages": [AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "continue_business_workflow",
+                    "id": "continuation-call",
+                    "args": {},
+                }],
+            )]
+        }
+        yield {
+            "messages": [AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "inspection_query_coverage",
+                    "id": "coverage-call",
+                    "args": {},
+                }],
+            )]
+        }
+        yield {
+            "messages": [ToolMessage(
+                content=json.dumps({"ok": True, "coverage": []}),
+                tool_call_id="coverage-call",
+            )]
+        }
+        yield {
+            "messages": [ToolMessage(
+                content=json.dumps({"status": "success"}),
+                tool_call_id="continuation-call",
+            )]
+        }
+        yield {"messages": [AIMessage(content="done")]}
+
+    async def aget_state(self, config: dict[str, Any]) -> Any:
+        return type("Snapshot", (), {"values": {}})()
+
+
 class LiveProgressStreamingAgent:
     async def astream(self, payload: dict[str, Any], **kwargs: Any):
         channel = get_progress_channel()
@@ -388,6 +428,33 @@ def test_internal_progress_tool_is_hidden_and_business_tool_completes_immediatel
     UUID(thinking[0]["data"]["step_id"])
     assert thinking[1]["data"]["step_id"] == thinking[0]["data"]["step_id"]
     assert all("Update task progress" not in str(event) for event in events)
+    assert [event["type"] for event in events] == [
+        "thinking_step",
+        "thinking_step",
+        "message",
+    ]
+
+
+def test_business_continuation_wrapper_is_hidden_around_business_steps() -> None:
+    context = PluginContext()
+    context.tools.register_step(
+        "inspection_query_coverage",
+        "分析巡检覆盖条件",
+        "正在结合机场覆盖情况判断可用的巡检方式",
+    )
+    service = SessionService(
+        agent=ContinuationAndBusinessToolAgent(),
+        plugin_context=context,
+    )
+
+    events = asyncio.run(_collect_stream(service))
+    thinking = [event for event in events if event["type"] == "thinking_step"]
+
+    assert [event["data"]["status"] for event in thinking] == [
+        "running",
+        "completed",
+    ]
+    assert all("Continue business" not in str(event) for event in events)
     assert [event["type"] for event in events] == [
         "thinking_step",
         "thinking_step",
