@@ -15,6 +15,11 @@ PLAN_TYPES = {
     "5": "临时计划",
 }
 
+PLAN_TYPE_ALIASES = {
+    "临时巡检": "5",
+    "临时巡检计划": "5",
+}
+
 
 class CreateInspectionPlanInput(BaseModel):
     plan_type: str = Field(min_length=1, alias="planType")
@@ -107,6 +112,8 @@ def normalize_plan_type(value: str) -> str:
     normalized = value.strip()
     if normalized in PLAN_TYPES:
         return normalized
+    if normalized in PLAN_TYPE_ALIASES:
+        return PLAN_TYPE_ALIASES[normalized]
     for key, name in PLAN_TYPES.items():
         if normalized == name:
             return key

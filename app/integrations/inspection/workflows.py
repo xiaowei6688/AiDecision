@@ -309,7 +309,7 @@ def inspection_query_work_order_resources() -> dict[str, Any]:
         import httpx
 
         drone_response = auth_client.request_with_retry_sync(
-            lambda headers: httpx.post(
+            lambda headers: httpx.get(
                 drone_url,
                 headers=headers,
                 timeout=settings.api_timeout_seconds,
