@@ -85,6 +85,8 @@ class SessionEventProjection:
         return payload
 
     def _candidate_dicts(self, value: Any) -> list[dict[str, Any]]:
+        """提取事件中的结构化候选，并优先返回最新的嵌套消息结果。"""
+
         value = self._unwrap_langgraph_value(value)
         if isinstance(value, BaseMessage):
             content = self._message_content_to_text(value.content)
@@ -94,13 +96,15 @@ class SessionEventProjection:
                 return []
             return self._candidate_dicts(parsed)
         if isinstance(value, dict):
-            candidates = [value]
-            for item in value.values():
+            candidates: list[dict[str, Any]] = []
+            # LangGraph 的 messages 是追加历史；恢复会话时必须优先使用最后一条。
+            for item in reversed(list(value.values())):
                 candidates.extend(self._candidate_dicts(item))
+            candidates.append(value)
             return candidates
         if isinstance(value, list | tuple):
             candidates: list[dict[str, Any]] = []
-            for item in value:
+            for item in reversed(value):
                 candidates.extend(self._candidate_dicts(item))
             return candidates
         return []

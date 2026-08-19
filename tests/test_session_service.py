@@ -716,6 +716,64 @@ def test_normalize_event_prefers_frontend_callback_completion_over_confirmation(
     assert normalized["data"]["data"]["frontendResult"]["planGuid"] == "plan-1"
 
 
+def test_normalize_event_prefers_latest_frontend_callback_over_stale_plan_result() -> None:
+    service = SessionService(agent=None)
+    event = {
+        "messages": [
+            ToolMessage(
+                content=json.dumps({
+                    "status": "success",
+                    "action_id": "inspection.create_plan",
+                    "message": "已确认创建巡检计划。",
+                    "data": {"pendingAction": {"executionMode": "frontend_callback"}},
+                }, ensure_ascii=False),
+                tool_call_id="plan-1",
+            ),
+            ToolMessage(
+                content=json.dumps({
+                    "status": "success",
+                    "action_id": "inspection.create_work_order",
+                    "message": "巡检工单已创建成功。",
+                    "data": {"pendingAction": {"executionMode": "frontend_callback"}},
+                }, ensure_ascii=False),
+                tool_call_id="order-1",
+            ),
+        ]
+    }
+
+    normalized = service._normalize_event("session-1", event)
+
+    assert normalized["type"] == "message"
+    assert normalized["content"] == "巡检工单已创建成功。"
+    assert normalized["data"]["action_id"] == "inspection.create_work_order"
+
+
+def test_normalize_event_hides_explicitly_deferred_frontend_callback() -> None:
+    service = SessionService(agent=None)
+    event = {
+        "tools": {
+            "messages": [ToolMessage(
+                content=json.dumps({
+                    "status": "updated",
+                    "action_id": "example.deferred_callback",
+                    "message": "确认执行此操作",
+                    "data": {
+                        "pendingAction": {"executionMode": "frontend_callback"},
+                        "frontendResult": {"success": True},
+                        "awaitingActionResult": True,
+                        "final": False,
+                    },
+                }, ensure_ascii=False),
+                tool_call_id="frontend-approve-1",
+            )]
+        }
+    }
+
+    normalized = service._normalize_event("session-1", event)
+
+    assert normalized["type"] == "dst_state"
+
+
 def test_normalize_event_prefers_resume_completion_over_stale_pending_progress() -> None:
     service = SessionService(agent=None)
     event = {

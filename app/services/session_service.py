@@ -652,6 +652,12 @@ class SessionService(SessionEventProjection):
 
         frontend_callback_completion = self._frontend_callback_completion_from_event(event)
         if frontend_callback_completion is not None:
+            if frontend_callback_completion.get("_silent") is True:
+                return {
+                    "type": ServerEventType.DST_STATE.value,
+                    "session_id": session_id,
+                    "data": {"source": "frontend_callback", "status": "awaiting_result"},
+                }
             return {
                 "type": ServerEventType.MESSAGE.value,
                 "session_id": session_id,
@@ -838,6 +844,8 @@ class SessionService(SessionEventProjection):
             pending = data.get("pendingAction")
             if not isinstance(pending, dict) or pending.get("executionMode") != "frontend_callback":
                 continue
+            if data.get("awaitingActionResult") is True:
+                return {"_silent": True}
             return {
                 "status": candidate.get("status"),
                 "action_id": candidate.get("action_id"),

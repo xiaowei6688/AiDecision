@@ -101,9 +101,13 @@ def inspection_frontend_callback_resume_projection(
             }
         if action_result_code is None:
             return {
-                "status": "updated",
-                "message": "已确认起飞，请前端完成 /order/fly 后回传 actionResult。",
-                "data": {"pendingAction": pending_payload, "frontendResult": data, "final": False},
+                "status": "success",
+                "message": "已确认固定机场工单一键起飞。",
+                "data": {
+                    "pendingAction": pending_payload,
+                    "frontendResult": data,
+                    "final": True,
+                },
             }
         business_result = data.get("businessResult") if isinstance(data.get("businessResult"), dict) else {}
         fly_payload = business_result.get("data") if isinstance(business_result.get("data"), dict) else {}
@@ -157,10 +161,11 @@ def inspection_frontend_callback_resume_projection(
                         "nextUserAction": "立即按计划 ID 查询真实计划详情，并按机场覆盖情况拆分巡检工单。",
                     },
                 }
-        message = resume_value.get("content") or "巡检计划已确认创建。"
         return {
+            # 旧版计划流程中，用户确认后计划 Agent 立即收尾；前端是否在
+            # 后续发起 createPlan actionResult，是进入工单流程的独立触发。
             "status": "success",
-            "message": message,
+            "message": "已确认创建巡检计划。",
             "data": {
                 "pendingAction": pending_payload,
                 "frontendResult": data,
@@ -196,14 +201,14 @@ def inspection_frontend_callback_resume_projection(
 
     if action_result_code is None:
         return {
-            "status": "updated",
-            "message": "已确认创建巡检工单，请前端完成创建后回传 actionResult。",
+            # 确认表示当前工单 Agent 已完成本轮工作。真正的创建回执会在
+            # 前端后续发送 createTempOrder actionResult 时单独触发下一轮流程。
+            "status": "success",
+            "message": "已确认创建巡检工单。",
             "data": {
                 "pendingAction": pending_payload,
                 "frontendResult": data,
-                "awaitingActionResult": True,
-                "final": False,
-                "nextUserAction": "调用 /order/createTempOrder 后回传包含工单 ID 的 actionResult。",
+                "final": True,
             },
         }
 

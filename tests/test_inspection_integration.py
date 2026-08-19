@@ -682,7 +682,7 @@ def test_legacy_create_plan_action_result_finishes_with_created_plan_id() -> Non
     }
 
 
-def test_inspection_plan_plain_resume_completes_without_action_result() -> None:
+def test_inspection_plan_approve_finishes_plan_agent() -> None:
     projected = inspection_frontend_callback_resume_projection(
         {
             "action_id": "inspection.create_plan",
@@ -692,11 +692,11 @@ def test_inspection_plan_plain_resume_completes_without_action_result() -> None:
     )
 
     assert projected["status"] == "success"
+    assert projected["message"] == "已确认创建巡检计划。"
     assert projected["data"]["final"] is True
-    assert "ACTION_RESULT_REQUIRED" not in projected
 
 
-def test_inspection_work_order_approve_waits_for_action_result() -> None:
+def test_inspection_work_order_approve_finishes_current_agent_turn() -> None:
     projected = inspection_frontend_callback_resume_projection(
         {
             "status": "requires_confirmation",
@@ -711,10 +711,9 @@ def test_inspection_work_order_approve_waits_for_action_result() -> None:
         },
     )
 
-    assert projected["status"] == "updated"
-    assert projected["data"]["awaitingActionResult"] is True
-    assert projected["data"]["final"] is False
-    assert "actionResult" in projected["message"]
+    assert projected["status"] == "success"
+    assert projected["data"]["final"] is True
+    assert projected["message"] == "已确认创建巡检工单。"
 
 
 def test_inspection_work_order_rejects_wrong_action_result_code() -> None:
