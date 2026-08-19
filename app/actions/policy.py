@@ -56,6 +56,3 @@ class PolicyEngine:
             )
 
         return PolicyDecision(allowed=True)
-
-
-default_policy_engine = PolicyEngine()

@@ -7,8 +7,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.actions.policy import PolicyEngine, default_policy_engine
-from app.actions.registry import ActionRegistry, default_action_registry
+from app.actions.policy import PolicyEngine
+from app.actions.registry import ActionRegistry
 from app.actions.schemas import ActionExecutionContext, ActionResult
 from app.adapters.base import BusinessAdapter
 from app.core.durable_state import PostgresDurableState
@@ -269,9 +269,3 @@ class BusinessActionExecutor:
         for key, value in values.items():
             rendered = rendered.replace("{{" + key + "}}", str(value))
         return rendered
-
-
-default_action_executor = BusinessActionExecutor(
-    registry=default_action_registry,
-    policy_engine=default_policy_engine,
-)

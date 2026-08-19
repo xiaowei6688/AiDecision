@@ -50,6 +50,3 @@ class ActionRegistry:
         if needle in haystack:
             return 1.0
         return SequenceMatcher(None, needle, haystack).ratio()
-
-
-default_action_registry = ActionRegistry()
