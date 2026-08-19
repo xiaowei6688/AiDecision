@@ -19,9 +19,14 @@ from app.integrations.inspection.bindings import inspection_session_bindings
 
 
 router = APIRouter(prefix="/integrations/inspection", tags=["inspection"])
+legacy_router = APIRouter(tags=["inspection-legacy"])
 
 
 @router.post("/notify")
+@router.post("/notify/detect_result")
+@router.post("/notify/start_flying")
+@legacy_router.post("/notify/detect_result")
+@legacy_router.post("/notify/start_flying")
 async def notify_inspection(
     request: InspectionNotificationRequest,
     push_manager: WebSocketPushManager = Depends(get_websocket_push_manager),

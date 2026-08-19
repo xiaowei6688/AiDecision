@@ -23,6 +23,7 @@ router = APIRouter()
 
 
 @router.websocket("/ws/chat")
+@router.websocket("/ws")
 async def new_chat_websocket(websocket: WebSocket) -> None:
     """为首次前端连接创建新的会话."""
 
@@ -35,6 +36,7 @@ async def new_chat_websocket(websocket: WebSocket) -> None:
 
 
 @router.websocket("/ws/chat/{session_id}")
+@router.websocket("/ws/{session_id}")
 async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
     """AI对话."""
 

@@ -14,7 +14,10 @@ from app.integrations.inspection.direct_results import (
     inspection_work_order_direct_action,
 )
 from app.integrations.inspection.continuations import inspection_continuation
-from app.integrations.inspection.routes import router as inspection_router
+from app.integrations.inspection.routes import (
+    legacy_router as inspection_legacy_router,
+    router as inspection_router,
+)
 from app.integrations.inspection.ui import (
     inspection_action_result_projection,
     inspection_frontend_callback_resume_projection,
@@ -93,4 +96,4 @@ def register_inspection_agent(context: PluginContext) -> None:
 
 
 def inspection_routers() -> Sequence[APIRouter]:
-    return [inspection_router]
+    return [inspection_router, inspection_legacy_router]

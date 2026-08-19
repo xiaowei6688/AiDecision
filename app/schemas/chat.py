@@ -35,6 +35,27 @@ class ChatRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class LegacyChatRequest(BaseModel):
+    """旧版前端单入口交互负载。"""
+
+    type: ClientEventType = ClientEventType.MESSAGE
+    session_id: str = Field(min_length=1)
+    content: str | None = None
+    message: str | None = None
+    request_id: str | None = None
+    message_id: str | None = None
+    resume: Any | None = None
+    action_code: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("action_code", "actionCode"),
+    )
+    action_result: dict[str, Any] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("action_result", "actionResult"),
+    )
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class CreateSessionResponse(BaseModel):
     """后端创建新对话时返回的响应."""
 
@@ -59,6 +80,24 @@ class SessionHistoryResponse(BaseModel):
     session_id: str
     exists: bool
     history: list[dict[str, Any]] = Field(default_factory=list)
+    total: int | None = None
+    offset: int = 0
+    limit: int | None = None
+
+
+class SessionHistorySearchHit(BaseModel):
+    session_id: str
+    intent: str | None = None
+    summary: str | None = None
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SessionHistorySearchResponse(BaseModel):
+    query: str
+    results: list[SessionHistorySearchHit] = Field(default_factory=list)
+    total: int
+    offset: int = 0
+    limit: int = 100
 
 
 class WebSocketClientEvent(BaseModel):

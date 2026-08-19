@@ -161,6 +161,29 @@ def test_http_message_endpoint_returns_event_and_state() -> None:
     assert body["state"]["intent"] == "test"
 
 
+def test_legacy_chat_endpoint_uses_session_id_from_body() -> None:
+    app = create_app(
+        settings=Settings(_env_file=None, auth_enabled=False),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat",
+            json={
+                "type": "message",
+                "content": "可以",
+                "session_id": "legacy-session",
+                "metadata": {"source": "legacy"},
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["event"]["session_id"] == "legacy-session"
+    assert body["event"]["content"] == "echo: 可以"
+
+
 def test_http_resume_endpoint_returns_event_and_state() -> None:
     app = create_app(
         settings=Settings(_env_file=None, auth_enabled=False),
@@ -231,6 +254,21 @@ def test_chat_websocket_without_session_id_creates_session() -> None:
 
     with TestClient(app) as client:
         with client.websocket_connect("/ws/chat") as websocket:
+            ack = websocket.receive_json()
+
+    assert ack["type"] == "ack"
+    assert ack["session_id"]
+    assert ack["data"]["created"] is True
+
+
+def test_legacy_websocket_alias_creates_session() -> None:
+    app = create_app(
+        settings=Settings(_env_file=None, auth_enabled=False),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws") as websocket:
             ack = websocket.receive_json()
 
     assert ack["type"] == "ack"
@@ -354,7 +392,7 @@ def test_inspection_notifications_push_to_the_bound_websocket_session() -> None:
         with client.websocket_connect("/ws/chat/demo") as websocket:
             websocket.receive_json()
             response = client.post(
-                "/integrations/inspection/notify",
+                "/notify/start_flying",
                 json={
                     "type": "startFlying",
                     "content": {

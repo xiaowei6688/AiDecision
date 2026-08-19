@@ -578,8 +578,17 @@ class SessionService(SessionEventProjection):
             metadata=values.get("metadata") or {},
         )
 
-    async def get_session_history(self, session_id: str) -> list[dict[str, Any]]:
-        """按照旧版聊天历史格式返回检查点消息。"""
+    async def get_session_history(
+        self,
+        session_id: str,
+        *,
+        query: str | None = None,
+        role: str | None = None,
+        message_type: str | None = None,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """从通用 Agent checkpoint 返回可检索的会话历史。"""
 
         snapshot = await self._agent.aget_state(self._config(session_id))
         values = dict(snapshot.values or {})
@@ -587,15 +596,28 @@ class SessionService(SessionEventProjection):
         if not isinstance(messages, Sequence) or isinstance(messages, str | bytes):
             return []
         history: list[dict[str, Any]] = []
-        for message in messages:
+        normalized_query = query.strip().casefold() if query else None
+        normalized_role = role.strip().casefold() if role else None
+        normalized_type = message_type.strip().casefold() if message_type else None
+        for index, message in enumerate(messages):
             if not isinstance(message, BaseMessage):
                 continue
-            history.append({
+            item = {
+                "message_id": str(getattr(message, "id", None) or f"message-{index + 1}"),
                 "type": message.type,
                 "role": "assistant" if isinstance(message, AIMessage) else "user",
                 "content": self._message_content_to_text(message.content),
-            })
-        return history
+                "metadata": self._jsonable(getattr(message, "additional_kwargs", {}) or {}),
+            }
+            if normalized_query and normalized_query not in item["content"].casefold():
+                continue
+            if normalized_role and item["role"].casefold() != normalized_role:
+                continue
+            if normalized_type and item["type"].casefold() != normalized_type:
+                continue
+            history.append(item)
+        start = max(offset, 0)
+        return history[start:] if limit is None else history[start : start + max(limit, 0)]
 
     async def _compress_context_if_needed(self, session_id: str) -> None:
         if self._context_compressor is None:

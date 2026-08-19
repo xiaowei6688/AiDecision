@@ -3,7 +3,7 @@ import asyncio
 import json
 from uuid import UUID
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.integrations.inspection.ui import inspection_human_interrupt_projection
 from app.integrations.context import PluginContext
@@ -23,6 +23,15 @@ class StreamingAgent:
 
     async def aget_state(self, config: dict[str, Any]) -> Any:
         return type("Snapshot", (), {"values": {}})()
+
+
+class HistoryAgent:
+    async def aget_state(self, config: dict[str, Any]) -> Any:
+        return type("Snapshot", (), {"values": {"messages": [
+            HumanMessage(content="查询白路线计划"),
+            AIMessage(content="白路线计划已找到"),
+            HumanMessage(content="查询其他线路"),
+        ]}})()
 
 
 class RuntimeMetadataStreamingAgent:
@@ -275,6 +284,23 @@ def test_stream_message_does_not_emit_lifecycle_start_or_end() -> None:
     assert len(events) == 1
     assert events[0]["type"] == "message"
     assert events[0]["content"] == "done"
+
+
+def test_session_history_supports_search_role_filter_and_pagination() -> None:
+    service = SessionService(agent=HistoryAgent())
+
+    history = asyncio.run(service.get_session_history(
+        "session-1",
+        query="白路线",
+        role="assistant",
+        offset=0,
+        limit=1,
+    ))
+
+    assert len(history) == 1
+    assert history[0]["role"] == "assistant"
+    assert history[0]["content"] == "白路线计划已找到"
+    assert history[0]["message_id"]
 
 
 def test_stream_message_exposes_request_metadata_to_runtime_tools() -> None:

@@ -167,8 +167,11 @@ X-User-Roles: role-a,role-b
 | `POST` | `/sessions` | 创建会话 |
 | `GET` | `/sessions/{session_id}/state` | 查询会话状态 |
 | `GET` | `/sessions/{session_id}/history` | 查询会话历史 |
+| `GET` | `/sessions/search?q=关键词` | 在当前用户的所有会话中检索历史消息 |
 | `POST` | `/sessions/{session_id}/messages` | 发送用户消息 |
 | `POST` | `/sessions/{session_id}/resume` | 恢复暂停的 Agent |
+| `POST` | `/chat` | 旧版单入口消息、`resume`、`actionResult` 兼容接口 |
+| `GET` | `/history/{session_id}` | 旧版会话历史路径别名 |
 
 创建会话：
 
@@ -191,6 +194,26 @@ curl -X POST http://127.0.0.1:8000/sessions/<session_id>/resume \
   -H 'Content-Type: application/json' \
   -d '{"action":"approve","content":"确认执行此操作","data":{}}'
 ```
+
+查询单个会话历史：
+
+```bash
+curl 'http://127.0.0.1:8000/sessions/<session_id>/history?q=白路线&role=assistant&offset=0&limit=50'
+```
+
+检索当前用户的历史会话：
+
+```bash
+curl 'http://127.0.0.1:8000/sessions/search?q=白路线&offset=0&limit=20'
+```
+
+历史消息由通用框架从 Agent checkpoint 读取，包含消息 ID、角色、类型、内容和元数据；生产环境使用 PostgreSQL checkpoint 时，服务重启后仍可读取。`/sessions/search` 只检索当前认证用户拥有的会话，业务插件无需实现任何历史逻辑。
+
+## 旧前端接口兼容
+
+旧前端可继续使用 `WS /ws` 或 `WS /ws/{session_id}`；它们与 `/ws/chat` 使用同一套事件处理和认证逻辑。客户端每条消息仍须携带 `session_id`。HTTP 单入口可使用 `POST /chat`，请求体保持旧版字段：`type`、`content`、`session_id`、`resume` 或 `action_result`。业务 `actionResult` 由启用的插件注册转换，不由框架按业务名称判断。
+
+巡检插件额外保留旧通知入口：`POST /notify/start_flying` 与 `POST /notify/detect_result`；新调用方推荐使用 `/integrations/inspection/notify`。这些通知别名仅在启用 `inspection` 插件时注册。
 
 ## WebSocket 事件
 
