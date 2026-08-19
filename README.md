@@ -104,6 +104,8 @@ bundle = InventoryBundle()
 
 完整接入步骤见 [docs/plugin-integration-guide.md](docs/plugin-integration-guide.md)。
 
+系统分层、请求流转和通用层与插件层边界见 [docs/architecture.md](docs/architecture.md)。
+
 ## 运行方式
 
 环境要求：Python 3.11+、`uv`，以及生产环境需要的 PostgreSQL 和模型服务。
