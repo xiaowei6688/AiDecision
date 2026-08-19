@@ -66,7 +66,7 @@ class ToolBroker:
         request_id = str(uuid4())
         started = perf_counter()
         progress = get_progress_channel()
-        if progress is not None:
+        if progress is not None and description.emit_on_start:
             progress.publish(
                 session_id=runtime.session_id,
                 source="tool_broker",
@@ -114,7 +114,7 @@ class ToolBroker:
             arguments=request.arguments,
             evidence=result,
         )
-        if progress is not None:
+        if progress is not None and (status == "success" or description.emit_on_start):
             progress.publish(
                 session_id=runtime.session_id,
                 source="tool_broker",

@@ -376,20 +376,32 @@ class SessionService(SessionEventProjection):
                             },
                         }
                         if call_id not in pending_steps:
-                            pending_steps[call_id] = step
-                            events.append(step)
+                            pending_steps[call_id] = {
+                                **step,
+                                "_deferred": not description.emit_on_start,
+                            }
+                            if description.emit_on_start:
+                                events.append(step)
                 elif isinstance(message, ToolMessage):
                     call_id = str(getattr(message, "tool_call_id", "") or "").strip()
                     step = pending_steps.pop(call_id, None)
                     if step is None:
                         continue
+                    deferred = step.pop("_deferred", False)
+                    status = self._tool_message_status(message)
+                    # 对可恢复的前置条件失败，插件可延迟到成功后再展示该步骤。
+                    # 这样不会把模型内部的重试过程泄漏给前端。
+                    if deferred and status == "failed":
+                        continue
                     data = step.get("data")
                     data = data if isinstance(data, dict) else {}
+                    if deferred:
+                        events.append(step)
                     events.append({
                         **step,
                         "data": {
                             **data,
-                            "status": self._tool_message_status(message),
+                            "status": status,
                         },
                     })
         return events

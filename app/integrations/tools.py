@@ -13,6 +13,7 @@ from app.integrations.direct_results import DirectResult
 class ToolStepDescription:
     title: str
     summary: str
+    emit_on_start: bool = True
 
 
 class IntegrationToolRegistry:
@@ -37,9 +38,19 @@ class IntegrationToolRegistry:
             self._read_only.add(name)
 
     def register_step(
-        self, tool_name: str, title: str, summary: str | None = None
+        self,
+        tool_name: str,
+        title: str,
+        summary: str | None = None,
+        *,
+        emit_on_start: bool = True,
     ) -> None:
-        description = build_tool_step(tool_name, title, summary)
+        description = build_tool_step(
+            tool_name,
+            title,
+            summary,
+            emit_on_start=emit_on_start,
+        )
         if description is not None:
             self._steps[tool_name] = description
 
@@ -87,6 +98,8 @@ def build_tool_step(
     tool_name: str,
     title: str,
     summary: str | None = None,
+    *,
+    emit_on_start: bool = True,
 ) -> ToolStepDescription | None:
     if not tool_name or not title:
         return None
@@ -96,6 +109,7 @@ def build_tool_step(
     return ToolStepDescription(
         title=normalized_title,
         summary=(summary or title).strip() or normalized_title,
+        emit_on_start=emit_on_start,
     )
 
 

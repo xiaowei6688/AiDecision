@@ -83,7 +83,12 @@ def register_inspection_tools(context: PluginContext) -> None:
         ("inspection_query_work_order_resources", "核对巡检资源", "正在核对可用无人机和飞手资源"),
         ("inspection_build_work_order_fill_state", "整理工单确认信息", "正在把计划、设备和巡检方式整理成待确认的工单数据"),
     ):
-        context.tools.register_step(name, title, summary)
+        context.tools.register_step(
+            name,
+            title,
+            summary,
+            emit_on_start=name != "inspection_build_plan_fill_state",
+        )
     context.tools.register_direct_result(
         "inspection_build_work_order_fill_state",
         inspection_work_order_direct_action,
