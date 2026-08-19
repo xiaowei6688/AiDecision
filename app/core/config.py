@@ -31,7 +31,6 @@ class Settings(BaseSettings):
     allowed_origins: list[str] = Field(default_factory=lambda: ["*"])
     confirmation_secret: SecretStr = Field(default=SecretStr("development-confirmation-secret"))
     confirmation_ttl_seconds: int = Field(default=600, gt=0)
-    auth_enabled: bool = True
     enabled_integrations: list[str] = Field(default_factory=list)
 
     text_to_sql_base_url: str | None = Field(

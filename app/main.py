@@ -50,7 +50,7 @@ def create_app(
 
             async with create_postgres_checkpointer(runtime_settings) as checkpointer:
                 async with create_postgres_durable_state(runtime_settings.database_url or "") as durable_state:
-                    app.state.session_access = SessionAccessStore(durable_state=durable_state)
+                    app.state.session_access = SessionRegistry(durable_state=durable_state)
                     plugin_context.action_executor.set_durable_state(durable_state)
                     default_plan_store.set_durable_state(durable_state)
                     context_compressor = ContextCompressor(
@@ -73,8 +73,8 @@ def create_app(
             await integration_manager.shutdown()
 
     app = FastAPI(title=runtime_settings.app_name, lifespan=lifespan)
-    from app.core.session_access import SessionAccessStore
-    app.state.session_access = SessionAccessStore(
+    from app.core.session_access import SessionRegistry
+    app.state.session_access = SessionRegistry(
         allow_unknown=runtime_settings.environment == "development"
     )
     app.state.settings = runtime_settings

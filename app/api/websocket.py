@@ -15,7 +15,6 @@ from app.schemas.chat import (
     WebSocketServerEvent,
 )
 from app.services.session_service import SessionService
-from app.core.auth import authenticate_websocket
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +45,12 @@ async def chat_websocket(websocket: WebSocket, session_id: str) -> None:
 async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) -> None:
     connection = None
     try:
-        auth = authenticate_websocket(websocket, websocket.app.state.settings)
-        access = websocket.app.state.session_access
+        registry = websocket.app.state.session_access
         if created:
-            await access.create(session_id, auth)
+            await registry.create(session_id)
         else:
-            await access.ensure_access(session_id, auth)
-    except (ValueError, PermissionError) as exc:
+            await registry.ensure_exists(session_id)
+    except LookupError as exc:
         await websocket.close(code=1008, reason=str(exc))
         return
     await websocket.accept()
@@ -82,8 +80,8 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
 
             event_session_id = client_event.session_id
             try:
-                await access.ensure_access(event_session_id, auth)
-            except PermissionError as exc:
+                await registry.ensure_exists(event_session_id)
+            except LookupError as exc:
                 await _send_error(websocket, event_session_id, "session_not_found", str(exc))
                 continue
             push_manager.bind_session(connection, event_session_id)

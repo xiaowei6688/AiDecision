@@ -42,7 +42,7 @@ AI Decision 是一个面向企业业务系统的**插件化多 Agent 决策与�
 - **实时进度事件**：通过统一的 `thinking_step` 事件传递工具和任务进度。
 - **会话持久化**：使用 `session_id` 标识会话，可接入 PostgreSQL checkpoint 和持久化业务状态。
 - **上下文压缩**：长会话会保留最近消息，并把历史内容合并为摘要。
-- **可替换认证**：框架用户认证和业务插件访问上游系统的认证相互独立。
+- **会话边界**：当前阶段仅使用 `session_id` 识别和隔离对话，不引入用户登录与用户归属。
 - **多应用实例隔离**：每个 FastAPI 应用实例拥有独立的 `PluginContext`，插件注册不会互相污染。
 
 ## 目录结构
@@ -134,40 +134,24 @@ ENABLED_INTEGRATIONS='["*"]'
 
 生产环境建议显式列出插件名称，例如 `['inspection', 'inventory']`。
 
-## 用户认证
+## 会话边界
 
-框架用户认证和业务系统认证是两件事：
+当前框架不引入用户登录、用户归属或角色鉴权。HTTP 和 WebSocket 均以 `session_id`
+作为会话边界：创建会话后，后续请求和实时事件携带同一个 `session_id` 即可。
 
-- 框架认证保护本服务的 HTTP/WebSocket 会话。
-- 插件认证只负责插件访问自己的上游业务系统。
-
-关闭本服务用户认证：
-
-```env
-AUTH_ENABLED=false
-```
-
-关闭后使用匿名用户和匿名租户。开启认证时，调用方通常携带：
-
-```http
-Authorization: Bearer <caller-token>
-X-User-Id: <user-id>
-X-Tenant-Id: <tenant-id>
-X-User-Roles: role-a,role-b
-```
-
-仓库提供的是认证边界和开发环境兼容逻辑，真正的 JWT/SSO token 签发与校验由部署环境接入。插件自己的 token、账号、租户和认证头不得写入通用配置，应放在插件目录及其私有配置中。
+插件访问自身上游业务系统所需的 Token、账号、租户和认证头仍由插件私有配置管理，
+不得写入通用框架配置。
 
 ## HTTP 接口
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
 | `GET` | `/health` | 健康检查 |
-| `GET` | `/sessions` | 查询当前用户会话 |
+| `GET` | `/sessions` | 查询已注册会话 |
 | `POST` | `/sessions` | 创建会话 |
 | `GET` | `/sessions/{session_id}/state` | 查询会话状态 |
 | `GET` | `/sessions/{session_id}/history` | 查询会话历史 |
-| `GET` | `/sessions/search?q=关键词` | 在当前用户的所有会话中检索历史消息 |
+| `GET` | `/sessions/search?q=关键词` | 在已注册会话中检索历史消息 |
 | `POST` | `/sessions/{session_id}/messages` | 发送用户消息 |
 | `POST` | `/sessions/{session_id}/resume` | 恢复暂停的 Agent |
 | `POST` | `/chat` | 旧版单入口消息、`resume`、`actionResult` 兼容接口 |
@@ -201,13 +185,13 @@ curl -X POST http://127.0.0.1:8000/sessions/<session_id>/resume \
 curl 'http://127.0.0.1:8000/sessions/<session_id>/history?q=白路线&role=assistant&offset=0&limit=50'
 ```
 
-检索当前用户的历史会话：
+检索历史会话：
 
 ```bash
 curl 'http://127.0.0.1:8000/sessions/search?q=白路线&offset=0&limit=20'
 ```
 
-历史消息由通用框架从 Agent checkpoint 读取，包含消息 ID、角色、类型、内容和元数据；生产环境使用 PostgreSQL checkpoint 时，服务重启后仍可读取。`/sessions/search` 只检索当前认证用户拥有的会话，业务插件无需实现任何历史逻辑。
+历史消息由通用框架从 Agent checkpoint 读取，包含消息 ID、角色、类型、内容和元数据；生产环境使用 PostgreSQL checkpoint 时，服务重启后仍可读取。`/sessions/search` 检索已注册会话，业务插件无需实现任何历史逻辑。
 
 为了让旧版前端直接读取，历史接口还会同时返回 `code`、`msg` 和 `data.history[0].messages` 的旧版分组结构；顶层 `history` 保持新版扁平消息列表。两种结构来自同一份通用历史数据，不需要插件适配。
 

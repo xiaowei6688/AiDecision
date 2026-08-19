@@ -1,16 +1,48 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, cast
+import logging
+from typing import Any, AsyncIterator
 
 from psycopg_pool import AsyncConnectionPool
 
-from app.core.auth import AuthContext
-from app.core.runtime_context import RequestRuntimeContext
+logger = logging.getLogger(__name__)
+
+
+_TABLE_DEFINITIONS = {
+    "agent_sessions": """
+        CREATE TABLE agent_sessions (
+            session_id TEXT PRIMARY KEY,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """,
+    "agent_confirmation_tokens": """
+        CREATE TABLE agent_confirmation_tokens (
+            token TEXT PRIMARY KEY,
+            expires_at BIGINT NOT NULL,
+            consumed_at BIGINT
+        )
+    """,
+    "agent_execution_plans": """
+        CREATE TABLE agent_execution_plans (
+            plan_id TEXT PRIMARY KEY,
+            session_id TEXT,
+            plan JSONB NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """,
+    "agent_action_idempotency": """
+        CREATE TABLE agent_action_idempotency (
+            idempotency_key TEXT PRIMARY KEY,
+            result JSONB NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """,
+}
 
 
 class PostgresDurableState:
-    """多实例运行时的持久化归属关系与一次性确认状态。"""
+    """多实例运行时的会话、一次性确认和执行状态。"""
 
     def __init__(self, pool: AsyncConnectionPool[Any]) -> None:
         self._pool = pool
@@ -22,56 +54,50 @@ class PostgresDurableState:
                 yield cursor
 
     async def setup(self) -> None:
+        """启动时检查并创建运行时状态表，不修改既有业务数据。"""
+
+        created: list[str] = []
         async with self._cursor() as cursor:
+            for table_name, statement in _TABLE_DEFINITIONS.items():
+                await cursor.execute("SELECT to_regclass(%s)", (table_name,))
+                exists = await cursor.fetchone()
+                if exists is None or exists[0] is None:
+                    await cursor.execute(statement)
+                    created.append(table_name)
+
+            # 保留旧版本的会话入口，迁移只复制 session_id，不删除历史表或消息。
             await cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS agent_session_owners (
-                    session_id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    tenant_id TEXT NOT NULL,
-                    roles TEXT[] NOT NULL DEFAULT '{}'
-                );
-                CREATE TABLE IF NOT EXISTS agent_confirmation_tokens (
-                    token TEXT PRIMARY KEY,
-                    expires_at BIGINT NOT NULL,
-                    consumed_at BIGINT
-                );
-                CREATE TABLE IF NOT EXISTS agent_execution_plans (
-                    plan_id TEXT PRIMARY KEY,
-                    session_id TEXT,
-                    plan JSONB NOT NULL,
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                );
-                CREATE TABLE IF NOT EXISTS agent_action_idempotency (
-                    idempotency_key TEXT PRIMARY KEY,
-                    result JSONB NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                );
+                DO $$
+                BEGIN
+                    IF to_regclass('agent_session_owners') IS NOT NULL THEN
+                        INSERT INTO agent_sessions(session_id)
+                        SELECT session_id FROM agent_session_owners
+                        ON CONFLICT DO NOTHING;
+                    END IF;
+                END $$
                 """
             )
+        if created:
+            logger.info("运行时状态表不存在，已创建: %s", ", ".join(created))
+        else:
+            logger.info("运行时状态表检查完成，全部已存在")
 
-    async def create_session(self, session_id: str, auth: AuthContext) -> None:
+    async def create_session(self, session_id: str) -> None:
         async with self._cursor() as cursor:
             await cursor.execute(
-                """INSERT INTO agent_session_owners(session_id, user_id, tenant_id, roles)
-                VALUES (%s, %s, %s, %s)""",
-                (session_id, auth.user_id, auth.tenant_id, list(auth.roles)),
+                "INSERT INTO agent_sessions(session_id) VALUES (%s) ON CONFLICT DO NOTHING",
+                (session_id,),
             )
 
-    async def session_context(self, session_id: str, auth: AuthContext) -> RequestRuntimeContext:
+    async def session_exists(self, session_id: str) -> bool:
         async with self._cursor() as cursor:
             await cursor.execute(
-                "SELECT user_id, tenant_id, roles FROM agent_session_owners WHERE session_id = %s",
+                "SELECT 1 FROM agent_sessions WHERE session_id = %s",
                 (session_id,),
             )
             record = await cursor.fetchone()
-        owner = cast(tuple[str, str, list[str]] | None, record)
-        if owner is None or owner[0] != auth.user_id or owner[1] != auth.tenant_id:
-            raise PermissionError("Session does not belong to the authenticated principal")
-        return RequestRuntimeContext(
-            user_id=owner[0], user_roles=tuple(owner[2]), session_id=session_id,
-            metadata={"tenant_id": owner[1]},
-        )
+        return record is not None
 
     async def issue_confirmation(self, token: str, expires_at: int) -> None:
         async with self._cursor() as cursor:

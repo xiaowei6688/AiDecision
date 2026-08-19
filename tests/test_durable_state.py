@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 import pytest
 
 from app.core import durable_state
@@ -39,3 +41,31 @@ async def test_durable_state_uses_checked_autocommit_connection_pool(
     assert created["max_size"] == 10
     assert created["open"] is False
     assert created["check"] is FakePool.check_connection
+
+
+@pytest.mark.asyncio
+async def test_durable_state_setup_creates_only_missing_tables() -> None:
+    executed: list[tuple[str, tuple[object, ...] | None]] = []
+
+    class Cursor:
+        def __init__(self) -> None:
+            self._table_name: str | None = None
+
+        async def execute(self, statement: str, params: tuple[object, ...] | None = None) -> None:
+            executed.append((statement, params))
+            if statement == "SELECT to_regclass(%s)":
+                self._table_name = str(params[0])
+
+        async def fetchone(self) -> tuple[str | None] | None:
+            return (self._table_name,) if self._table_name == "agent_sessions" else (None,)
+
+    class State(durable_state.PostgresDurableState):
+        @asynccontextmanager
+        async def _cursor(self):  # type: ignore[override]
+            yield Cursor()
+
+    await State(pool=object()).setup()  # type: ignore[arg-type]
+
+    created = [statement for statement, _ in executed if statement.lstrip().startswith("CREATE TABLE")]
+    assert len(created) == 3
+    assert any("DO $$" in statement for statement, _ in executed)

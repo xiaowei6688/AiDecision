@@ -1,10 +1,13 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import logging
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from app.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class CheckpointConfigurationError(RuntimeError):
@@ -28,4 +31,5 @@ async def create_postgres_checkpointer(
     async with AsyncPostgresSaver.from_conn_string(settings.database_url) as saver:
         if settings.checkpoint_setup_on_start:
             await saver.setup()
+            logger.info("LangGraph checkpoint 表检查并初始化完成")
         yield saver

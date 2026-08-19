@@ -232,7 +232,7 @@ class InventoryAdapter(BusinessAdapter):
             raise ValueError(f"Unsupported inventory operation: {method}")
 
         # 在这里调用库存系统 HTTP/RPC/MCP 接口。
-        # context.metadata 可读取当前用户、租户和幂等键。
+        # context.metadata 可读取会话元数据和幂等键。
         return {"order_id": "created-by-inventory-system"}
 ```
 
@@ -254,7 +254,7 @@ def validate_purchase_order(
     context: ActionExecutionContext,
 ) -> str | None:
     if context.user_id is None:
-        return "缺少当前用户身份"
+        return "缺少业务所需的会话元数据"
     return None
 ```
 
@@ -472,7 +472,6 @@ INVENTORY_DATASOURCE=inventory_mysql
 根 `.env` 只配置框架级内容，例如：
 
 ```env
-AUTH_ENABLED=true
 TEXT_TO_SQL_BASE_URL=http://127.0.0.1:8088/ask
 ENABLED_INTEGRATIONS=["inventory"]
 ```

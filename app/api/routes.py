@@ -4,9 +4,8 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from app.api.dependencies import get_auth_context, get_session_access, get_session_service, get_settings_from_app
-from app.core.auth import AuthContext
-from app.core.session_access import SessionAccessStore
+from app.api.dependencies import get_session_registry, get_session_service, get_settings_from_app
+from app.core.session_access import SessionRegistry
 from app.core.config import Settings
 from app.schemas.chat import (
     ChatRequest,
@@ -27,11 +26,11 @@ from app.services.session_service import SessionService
 router = APIRouter()
 
 
-async def _ensure_access(access: SessionAccessStore, session_id: str, auth: AuthContext) -> None:
+async def _ensure_session(registry: SessionRegistry, session_id: str) -> None:
     try:
-        await access.ensure_access(session_id, auth)
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+        await registry.ensure_exists(session_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/health")
@@ -47,11 +46,10 @@ async def health(settings: Settings = Depends(get_settings_from_app)) -> dict[st
 async def list_sessions(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
-    auth: AuthContext = Depends(get_auth_context),
-    access: SessionAccessStore = Depends(get_session_access),
+    registry: SessionRegistry = Depends(get_session_registry),
     session_service: SessionService = Depends(get_session_service),
 ) -> ListSessionsResponse:
-    session_ids = access.list_owned(auth)[offset : offset + limit]
+    session_ids = registry.list_sessions()[offset : offset + limit]
     records: list[SessionRecord] = []
     for session_id in session_ids:
         state = await session_service.get_state(session_id)
@@ -66,25 +64,23 @@ async def list_sessions(
 
 @router.post("/sessions", response_model=CreateSessionResponse)
 async def create_session(
-    auth: AuthContext = Depends(get_auth_context),
-    access: SessionAccessStore = Depends(get_session_access),
+    registry: SessionRegistry = Depends(get_session_registry),
 ) -> CreateSessionResponse:
     """为前端创建服务器拥有的会话id."""
 
     session_id = str(uuid4())
-    await access.create(session_id, auth)
+    await registry.create(session_id)
     return CreateSessionResponse(session_id=session_id)
 
 
 @router.post("/sessions/{session_id}/refresh", response_model=CreateSessionResponse)
 async def refresh_session(
     session_id: str,
-    auth: AuthContext = Depends(get_auth_context),
-    access: SessionAccessStore = Depends(get_session_access),
+    registry: SessionRegistry = Depends(get_session_registry),
 ) -> CreateSessionResponse:
-    await _ensure_access(access, session_id, auth)
+    await _ensure_session(registry, session_id)
     refreshed_id = str(uuid4())
-    await access.create(refreshed_id, auth)
+    await registry.create(refreshed_id)
     return CreateSessionResponse(session_id=refreshed_id)
 
 
@@ -92,10 +88,9 @@ async def refresh_session(
 async def get_session_state(
     session_id: str,
     session_service: SessionService = Depends(get_session_service),
-    auth: AuthContext = Depends(get_auth_context),
-    access: SessionAccessStore = Depends(get_session_access),
+    registry: SessionRegistry = Depends(get_session_registry),
 ) -> SessionStateResponse:
-    await _ensure_access(access, session_id, auth)
+    await _ensure_session(registry, session_id)
     return await session_service.get_state(session_id)
 
 
@@ -109,10 +104,9 @@ async def get_session_history(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=1000),
     session_service: SessionService = Depends(get_session_service),
-    auth: AuthContext = Depends(get_auth_context),
-    access: SessionAccessStore = Depends(get_session_access),
+    registry: SessionRegistry = Depends(get_session_registry),
 ) -> SessionHistoryResponse:
-    await _ensure_access(access, session_id, auth)
+    await _ensure_session(registry, session_id)
     history = await session_service.get_session_history(
         session_id,
         query=q,
@@ -143,14 +137,13 @@ async def search_session_history(
     q: str = Query(min_length=1),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=1000),
-    auth: AuthContext = Depends(get_auth_context),
-    access: SessionAccessStore = Depends(get_session_access),
+    registry: SessionRegistry = Depends(get_session_registry),
     session_service: SessionService = Depends(get_session_service),
 ) -> SessionHistorySearchResponse:
-    """在当前用户拥有的会话中检索历史消息。"""
+    """在已注册会话中检索历史消息。"""
 
     hits: list[SessionHistorySearchHit] = []
-    for session_id in access.list_owned(auth):
+    for session_id in registry.list_sessions():
         messages = await session_service.get_session_history(session_id, query=q)
         if not messages:
             continue
@@ -176,12 +169,11 @@ async def send_session_message(
     request: ChatRequest | None = None,
     message: str | None = Query(default=None),
     session_service: SessionService = Depends(get_session_service),
-    auth: AuthContext = Depends(get_auth_context),
-    access: SessionAccessStore = Depends(get_session_access),
+    registry: SessionRegistry = Depends(get_session_registry),
 ) -> InteractionResponse:
     """返回正常或HITL事件的HTTP聊天端点."""
 
-    await _ensure_access(access, session_id, auth)
+    await _ensure_session(registry, session_id)
     content = request.message if request is not None else message
     if not content:
         raise HTTPException(status_code=422, detail="message is required")
@@ -199,8 +191,7 @@ async def legacy_chat(
     request: LegacyChatRequest,
     http_request: Request,
     session_service: SessionService = Depends(get_session_service),
-    auth: AuthContext = Depends(get_auth_context),
-    access: SessionAccessStore = Depends(get_session_access),
+    registry: SessionRegistry = Depends(get_session_registry),
 ) -> InteractionResponse:
     """兼容旧版前端的单入口 HTTP 交互接口。
 
@@ -208,7 +199,7 @@ async def legacy_chat(
     已启用插件转换，通用层只负责路由和会话协议归一化。
     """
 
-    await _ensure_access(access, request.session_id, auth)
+    await _ensure_session(registry, request.session_id)
     if request.type == "message":
         content = request.content or request.message
         if not content:
@@ -270,10 +261,9 @@ async def resume_session(
     session_id: str,
     request: HumanResumeRequest,
     session_service: SessionService = Depends(get_session_service),
-    auth: AuthContext = Depends(get_auth_context),
-    access: SessionAccessStore = Depends(get_session_access),
+    registry: SessionRegistry = Depends(get_session_registry),
 ) -> InteractionResponse:
-    await _ensure_access(access, session_id, auth)
+    await _ensure_session(registry, session_id)
     event = await session_service.resume_event(session_id, request)
     state = await session_service.get_state(session_id)
     return InteractionResponse(event=_public_event(event), state=state)

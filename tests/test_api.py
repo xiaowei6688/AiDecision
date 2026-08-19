@@ -6,8 +6,7 @@ import pytest
 
 from app.main import create_app
 from app.schemas.chat import HumanResumeRequest, SessionStateResponse
-from app.core.auth import AuthContext, authenticate_request
-from app.core.session_access import SessionAccessStore
+from app.core.session_access import SessionRegistry
 from app.core.config import Settings
 
 
@@ -96,7 +95,7 @@ class FakeSessionService:
 
 def test_health_endpoint_uses_injected_service() -> None:
     app = create_app(
-        settings=Settings(_env_file=None, auth_enabled=False),
+        settings=Settings(_env_file=None),
         session_service=FakeSessionService(),
     )  # type: ignore[arg-type]
 
@@ -107,35 +106,21 @@ def test_health_endpoint_uses_injected_service() -> None:
     assert response.json()["status"] == "ok"
 
 
-def test_authentication_can_be_disabled() -> None:
-    from app.core.config import Settings
-
-    settings = Settings(_env_file=None, auth_enabled=False)
-
-    class _Request:
-        headers = {}
-
-    auth = authenticate_request(_Request(), settings)  # type: ignore[arg-type]
-
-    assert auth.user_id == "anonymous-user"
-    assert auth.tenant_id == "anonymous-tenant"
-
-
 @pytest.mark.asyncio
-async def test_session_access_rejects_different_owner() -> None:
-    store = SessionAccessStore()
-    await store.create("s1", AuthContext(user_id="u1", tenant_id="t1"))
+async def test_session_registry_rejects_unknown_session() -> None:
+    registry = SessionRegistry()
+    await registry.create("s1")
     try:
-        await store.ensure_access("s1", AuthContext(user_id="u2", tenant_id="t1"))
-    except PermissionError:
+        await registry.ensure_exists("missing")
+    except LookupError:
         pass
     else:
-        raise AssertionError("different owner should be rejected")
+        raise AssertionError("unknown session should be rejected")
 
 
 def test_session_state_endpoint() -> None:
     app = create_app(
-        settings=Settings(_env_file=None, auth_enabled=False),
+        settings=Settings(_env_file=None),
         session_service=FakeSessionService(),
     )  # type: ignore[arg-type]
 
@@ -149,7 +134,7 @@ def test_session_state_endpoint() -> None:
 
 def test_session_history_includes_legacy_projection() -> None:
     app = create_app(
-        settings=Settings(_env_file=None, auth_enabled=False),
+        settings=Settings(_env_file=None),
         session_service=FakeSessionService(),
     )  # type: ignore[arg-type]
 
@@ -170,7 +155,7 @@ def test_session_history_includes_legacy_projection() -> None:
 
 def test_create_session_endpoint_returns_session_id() -> None:
     app = create_app(
-        settings=Settings(_env_file=None, auth_enabled=False),
+        settings=Settings(_env_file=None),
         session_service=FakeSessionService(),
     )  # type: ignore[arg-type]
 
@@ -183,7 +168,7 @@ def test_create_session_endpoint_returns_session_id() -> None:
 
 def test_http_message_endpoint_returns_event_and_state() -> None:
     app = create_app(
-        settings=Settings(_env_file=None, auth_enabled=False),
+        settings=Settings(_env_file=None),
         session_service=FakeSessionService(),
     )  # type: ignore[arg-type]
 
@@ -206,7 +191,7 @@ def test_http_message_endpoint_returns_event_and_state() -> None:
 
 def test_legacy_chat_endpoint_uses_session_id_from_body() -> None:
     app = create_app(
-        settings=Settings(_env_file=None, auth_enabled=False),
+        settings=Settings(_env_file=None),
         session_service=FakeSessionService(),
     )  # type: ignore[arg-type]
 
@@ -229,7 +214,7 @@ def test_legacy_chat_endpoint_uses_session_id_from_body() -> None:
 
 def test_http_resume_endpoint_returns_event_and_state() -> None:
     app = create_app(
-        settings=Settings(_env_file=None, auth_enabled=False),
+        settings=Settings(_env_file=None),
         session_service=FakeSessionService(),
     )  # type: ignore[arg-type]
 
@@ -251,7 +236,7 @@ def test_http_resume_endpoint_returns_event_and_state() -> None:
 
 def test_chat_websocket_returns_message_without_dst_state() -> None:
     app = create_app(
-        settings=Settings(_env_file=None, auth_enabled=False),
+        settings=Settings(_env_file=None),
         session_service=FakeSessionService(),
     )  # type: ignore[arg-type]
 
@@ -275,7 +260,7 @@ def test_chat_websocket_returns_message_without_dst_state() -> None:
 
 def test_chat_websocket_rejects_event_without_session_id() -> None:
     app = create_app(
-        settings=Settings(_env_file=None, auth_enabled=False),
+        settings=Settings(_env_file=None),
         session_service=FakeSessionService(),
     )  # type: ignore[arg-type]
 
@@ -291,7 +276,7 @@ def test_chat_websocket_rejects_event_without_session_id() -> None:
 
 def test_chat_websocket_without_session_id_creates_session() -> None:
     app = create_app(
-        settings=Settings(_env_file=None, auth_enabled=False),
+        settings=Settings(_env_file=None),
         session_service=FakeSessionService(),
     )  # type: ignore[arg-type]
 
@@ -306,7 +291,7 @@ def test_chat_websocket_without_session_id_creates_session() -> None:
 
 def test_legacy_websocket_alias_creates_session() -> None:
     app = create_app(
-        settings=Settings(_env_file=None, auth_enabled=False),
+        settings=Settings(_env_file=None),
         session_service=FakeSessionService(),
     )  # type: ignore[arg-type]
 
@@ -321,7 +306,7 @@ def test_legacy_websocket_alias_creates_session() -> None:
 
 def test_chat_websocket_filters_dst_state_resume_event() -> None:
     app = create_app(
-        settings=Settings(_env_file=None, auth_enabled=False),
+        settings=Settings(_env_file=None),
         session_service=FakeSessionService(),
     )  # type: ignore[arg-type]
 
@@ -355,7 +340,6 @@ def test_chat_websocket_runs_plugin_continuation_after_action_result() -> None:
     app = create_app(
         settings=Settings(
             _env_file=None,
-            auth_enabled=False,
             enabled_integrations=["inspection"],
         ),
         session_service=FakeSessionService(),
@@ -399,7 +383,7 @@ def test_chat_websocket_runs_plugin_continuation_after_action_result() -> None:
 
 def test_single_connection_routes_to_the_client_selected_session() -> None:
     app = create_app(
-        settings=Settings(_env_file=None, auth_enabled=False),
+        settings=Settings(_env_file=None),
         session_service=FakeSessionService(),
     )  # type: ignore[arg-type]
 
@@ -425,7 +409,6 @@ def test_inspection_notifications_push_to_the_bound_websocket_session() -> None:
     app = create_app(
         settings=Settings(
             _env_file=None,
-            auth_enabled=False,
             enabled_integrations=["inspection"],
         ),
         session_service=FakeSessionService(),
@@ -460,7 +443,6 @@ def test_inspection_defect_notification_keeps_real_counts() -> None:
     app = create_app(
         settings=Settings(
             _env_file=None,
-            auth_enabled=False,
             enabled_integrations=["inspection"],
         ),
         session_service=FakeSessionService(),
@@ -509,7 +491,6 @@ def test_start_flying_notification_resolves_session_from_work_order_binding() ->
     app = create_app(
         settings=Settings(
             _env_file=None,
-            auth_enabled=False,
             enabled_integrations=["inspection"],
         ),
         session_service=FakeSessionService(),
