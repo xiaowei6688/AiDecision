@@ -21,6 +21,7 @@ from app.schemas.chat import (
     SessionRecord,
     SessionStateResponse,
 )
+from app.services.history_projection import project_legacy_session_history
 from app.services.session_service import SessionService
 
 router = APIRouter()
@@ -118,13 +119,22 @@ async def get_session_history(
         role=role,
         message_type=message_type,
     )
+    page = history[offset : offset + limit]
+    state = await session_service.get_state(session_id)
     return SessionHistoryResponse(
         session_id=session_id,
         exists=bool(history),
-        history=history[offset : offset + limit],
+        history=page,
         total=len(history),
         offset=offset,
         limit=limit,
+        data=project_legacy_session_history(
+            session_id,
+            page,
+            intent=state.intent,
+            dialogue_stage=state.dialogue_stage,
+            summary=state.summary,
+        ),
     )
 
 

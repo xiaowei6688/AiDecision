@@ -209,6 +209,8 @@ curl 'http://127.0.0.1:8000/sessions/search?q=白路线&offset=0&limit=20'
 
 历史消息由通用框架从 Agent checkpoint 读取，包含消息 ID、角色、类型、内容和元数据；生产环境使用 PostgreSQL checkpoint 时，服务重启后仍可读取。`/sessions/search` 只检索当前认证用户拥有的会话，业务插件无需实现任何历史逻辑。
 
+为了让旧版前端直接读取，历史接口还会同时返回 `code`、`msg` 和 `data.history[0].messages` 的旧版分组结构；顶层 `history` 保持新版扁平消息列表。两种结构来自同一份通用历史数据，不需要插件适配。
+
 ## 旧前端接口兼容
 
 旧前端可继续使用 `WS /ws` 或 `WS /ws/{session_id}`；它们与 `/ws/chat` 使用同一套事件处理和认证逻辑。客户端每条消息仍须携带 `session_id`。HTTP 单入口可使用 `POST /chat`，请求体保持旧版字段：`type`、`content`、`session_id`、`resume` 或 `action_result`。业务 `actionResult` 由启用的插件注册转换，不由框架按业务名称判断。

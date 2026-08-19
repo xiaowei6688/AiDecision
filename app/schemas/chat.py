@@ -77,12 +77,17 @@ class ListSessionsResponse(BaseModel):
 
 
 class SessionHistoryResponse(BaseModel):
+    """新版扁平历史，同时携带旧版前端所需的兼容投影。"""
+
     session_id: str
     exists: bool
     history: list[dict[str, Any]] = Field(default_factory=list)
     total: int | None = None
     offset: int = 0
     limit: int | None = None
+    code: int = 200
+    msg: str = "success"
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class SessionHistorySearchHit(BaseModel):

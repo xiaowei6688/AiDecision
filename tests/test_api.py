@@ -12,6 +12,28 @@ from app.core.config import Settings
 
 
 class FakeSessionService:
+    async def get_session_history(
+        self,
+        _session_id: str,
+        **_filters: Any,
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "message_id": "message-1",
+                "type": "human",
+                "role": "user",
+                "content": "查询巡检计划",
+                "metadata": {"request_id": "request-1", "timestamp": "2026-08-19T10:00:00Z"},
+            },
+            {
+                "message_id": "message-2",
+                "type": "ai",
+                "role": "assistant",
+                "content": "请提供线路名称",
+                "metadata": {"parent_message_id": "message-1"},
+            },
+        ]
+
     async def send_message_event(
         self,
         session_id: str,
@@ -123,6 +145,27 @@ def test_session_state_endpoint() -> None:
     assert response.status_code == 200
     assert response.json()["session_id"] == "demo"
     assert response.json()["intent"] == "test"
+
+
+def test_session_history_includes_legacy_projection() -> None:
+    app = create_app(
+        settings=Settings(_env_file=None, auth_enabled=False),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        response = client.get("/sessions/demo/history")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["history"][0]["role"] == "user"
+    assert body["code"] == 200
+    assert body["data"]["session_id"] == "demo"
+    legacy_messages = body["data"]["history"][0]["messages"]
+    assert legacy_messages[0]["role"] == "human"
+    assert legacy_messages[0]["request_id"] == "request-1"
+    assert legacy_messages[1]["role"] == "ai"
+    assert legacy_messages[1]["parent_message_id"] == "message-1"
 
 
 def test_create_session_endpoint_returns_session_id() -> None:
