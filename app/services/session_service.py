@@ -3,6 +3,8 @@ from collections.abc import AsyncIterator, Sequence
 from collections.abc import Callable
 import hashlib
 import json
+import logging
+from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -16,6 +18,8 @@ from app.core.runtime_context import RequestRuntimeContext, reset_runtime_contex
 from app.core.progress import ProgressChannel, ProgressEvent, reset_progress_channel, set_progress_channel
 from app.integrations.context import PluginContext
 from app.services.session_event_projection import SessionEventProjection
+
+logger = logging.getLogger(__name__)
 
 
 class SessionService(SessionEventProjection):
@@ -590,9 +594,27 @@ class SessionService(SessionEventProjection):
             "content": request.content,
             "data": request.data,
         }
+        started = perf_counter()
         token = set_runtime_context(self._runtime_context(session_id))
         try:
-            return await self._agent.ainvoke(Command(resume=resume_payload), config=self._config(session_id))
+            result = await self._agent.ainvoke(
+                Command(resume=resume_payload), config=self._config(session_id)
+            )
+            logger.info(
+                "会话恢复完成: session_id=%s action=%s elapsed_ms=%d",
+                session_id,
+                request.action,
+                int((perf_counter() - started) * 1000),
+            )
+            return result
+        except Exception:
+            logger.exception(
+                "会话恢复失败: session_id=%s action=%s elapsed_ms=%d",
+                session_id,
+                request.action,
+                int((perf_counter() - started) * 1000),
+            )
+            raise
         finally:
             reset_runtime_context(token)
 

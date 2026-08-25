@@ -1,4 +1,6 @@
 import json
+import logging
+from time import perf_counter
 from typing import Annotated, Any
 
 from pydantic import ValidationError
@@ -19,6 +21,8 @@ from app.domain.plans import ExecutionPlan, PlanStatus, validate_execution_plan
 
 DEFAULT_HUMAN_ACTIONS = ["approve", "reject", "edit", "clarify"]
 PROGRESS_STATUSES = {"pending", "running", "completed", "failed", "skipped"}
+
+logger = logging.getLogger(__name__)
 
 
 def _ensure_business_runtime() -> None:
@@ -372,11 +376,18 @@ async def call_business_action(
         session_id=runtime.session_id,
         metadata=runtime.metadata,
     )
+    started = perf_counter()
     result = await _action_executor().execute(
         action_id=action_id,
         params=params,
         context=context,
         confirmation_token=confirmation_token,
+    )
+    logger.info(
+        "业务动作校验完成: action_id=%s status=%s elapsed_ms=%d",
+        action_id,
+        result.status,
+        int((perf_counter() - started) * 1000),
     )
     payload = _action_result_to_dict(result)
     if return_direct:

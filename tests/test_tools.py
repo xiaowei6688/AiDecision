@@ -3,6 +3,7 @@ import json
 
 from langchain_core.messages import AIMessage
 import pytest
+import app.tools.dynamic_tools as dynamic_tools
 
 from app.tools.base_tool import (
     call_business_action,
@@ -27,6 +28,7 @@ from app.core.progress import ProgressChannel, reset_progress_channel, set_progr
 from app.tools.broker import ToolBrokerRequest
 from app.tools.dynamic_tools import _tool_audit_progress
 from app.integrations.direct_results import DirectActionResult, DirectMessageResult
+from app.agents.business_agents import BusinessAgentManifest
 
 
 class _FakeModel:
@@ -336,6 +338,77 @@ def test_dynamic_tools_include_business_agent_consultation() -> None:
     assert "inspection_query_work_order_resources" in names
     assert "inspection_build_plan_fill_state" in names
     assert "inspection_build_work_order_fill_state" in names
+
+
+@pytest.mark.asyncio
+async def test_multi_agent_collaboration_forwards_unique_terminal_direct_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = PluginContext()
+    for business_id in ("inventory", "weather", "operations"):
+        context.business_agent_registry.register(BusinessAgentManifest(
+            business_id=business_id,
+            title=business_id,
+            description="测试 Agent",
+            system_prompt="",
+            datasources=(),
+            action_prefixes=(f"{business_id}.",),
+        ))
+
+    async def consult(
+        _model: object,
+        agent: BusinessAgentManifest,
+        _task: str,
+        invocation_context: dict[str, object],
+        *_args: object,
+        allow_direct_results: bool = False,
+    ) -> dict[str, object]:
+        if agent.business_id == "operations":
+            assert allow_direct_results is True
+            assert set(invocation_context["upstream_advice"]) == {"inventory", "weather"}
+            return {
+                "business_id": agent.business_id,
+                "status": "success",
+                "_framework": {
+                    "direct_action": {
+                        "action_id": "operations.execute",
+                        "params": {"ready": True},
+                    }
+                },
+                "tool_audit": [],
+            }
+        assert allow_direct_results is False
+        return {
+            "business_id": agent.business_id,
+            "status": "success",
+            "advice": {"facts_and_constraints": [agent.business_id]},
+            "tool_audit": [],
+        }
+
+    monkeypatch.setattr(dynamic_tools, "_consult_business_agent", consult)
+    run_tool = next(
+        item
+        for item in build_agent_tools(_FakeModel(), plugin_context=context)
+        if item.name == "run_business_collaboration"
+    )
+
+    result = await run_tool.ainvoke({
+        "task": "多系统准备后执行动作",
+        "steps": [
+            {"business_id": "inventory", "reason": "确认库存"},
+            {"business_id": "weather", "reason": "确认天气"},
+            {
+                "business_id": "operations",
+                "reason": "汇总前置条件并执行",
+                "depends_on": ["inventory", "weather"],
+            },
+        ],
+    })
+
+    assert result["_framework"]["direct_action"] == {
+        "action_id": "operations.execute",
+        "params": {"ready": True},
+    }
 
 
 @pytest.mark.asyncio

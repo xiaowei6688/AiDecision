@@ -231,6 +231,19 @@ def _build_run_business_collaboration_tool(
 
         action_registry = plugin_context.action_registry
         advice_by_agent: dict[str, dict[str, Any]] = {}
+        dependencies = {
+            dependency
+            for step in validated.steps
+            for dependency in step.depends_on
+        }
+        terminal_steps = [
+            step for step in validated.steps if step.business_id not in dependencies
+        ]
+        # 只有唯一最终节点能将已完成协作收束为直出动作。这样前置节点
+        # 不会绕过依赖，多个独立终点也不会由框架擅自挑选一个执行。
+        direct_terminal_id = (
+            terminal_steps[0].business_id if len(terminal_steps) == 1 else None
+        )
         for wave in waves:
             results = await asyncio.gather(*[
                 _consult_business_agent(
@@ -248,15 +261,13 @@ def _build_run_business_collaboration_tool(
                     action_registry,
                     plugin_context.tools,
                     plugin_context.tool_broker,
-                    # 多业务协作可能存在后续依赖，不能由中间业务 Agent
-                    # 提前截断。单业务流程才允许工具结果直接进入动作确认。
-                    allow_direct_results=len(validated.steps) == 1,
+                    allow_direct_results=step.business_id == direct_terminal_id,
                 )
                 for step in wave
             ])
             advice_by_agent.update({result["business_id"]: result for result in results})
         advice = [advice_by_agent[step.business_id] for step in validated.steps]
-        direct = _single_direct_result(advice) if len(validated.steps) == 1 else None
+        direct = _terminal_direct_result(advice_by_agent, direct_terminal_id)
         if direct is not None:
             return direct
         result: dict[str, Any] = {
@@ -457,4 +468,30 @@ def _single_direct_result(results: list[dict[str, Any]]) -> dict[str, Any] | Non
         "status": "success",
         "_framework": {"direct_action": direct_action},
         "tool_audit": result.get("tool_audit", []),
+    }
+
+
+def _terminal_direct_result(
+    results_by_business_id: dict[str, dict[str, Any]],
+    terminal_business_id: str | None,
+) -> dict[str, Any] | None:
+    """在所有协作节点成功后，提升唯一终点声明的直出动作。"""
+
+    if terminal_business_id is None or not results_by_business_id:
+        return None
+    if any(result.get("status") != "success" for result in results_by_business_id.values()):
+        return None
+    terminal = results_by_business_id.get(terminal_business_id)
+    framework = terminal.get("_framework") if isinstance(terminal, dict) else None
+    direct_action = framework.get("direct_action") if isinstance(framework, dict) else None
+    if not isinstance(direct_action, dict):
+        return None
+    return {
+        "status": "success",
+        "_framework": {"direct_action": direct_action},
+        "tool_audit": [
+            record
+            for result in results_by_business_id.values()
+            for record in result.get("tool_audit", [])
+        ],
     }
