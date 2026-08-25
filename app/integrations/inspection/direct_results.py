@@ -3,6 +3,7 @@
 from typing import Any
 
 from app.integrations.direct_results import DirectActionResult, DirectMessageResult, DirectResult
+from app.integrations.inspection.work_order_summary import work_order_group
 
 
 def inspection_work_order_direct_action(result: Any) -> DirectResult | None:
@@ -66,28 +67,4 @@ def inspection_work_order_direct_action(result: Any) -> DirectResult | None:
 
 
 def _is_dock_work_order(item: dict[str, Any]) -> bool:
-    value = str(
-        item.get("inspectionMethod")
-        or item.get("inspection_method")
-        or item.get("inspectionWay")
-        or item.get("inspection_way")
-        or item.get("workOrderType")
-        or item.get("work_order_type")
-        or ""
-    ).strip().lower()
-    return (
-        value in {
-            "dock",
-            "fixed_dock",
-            "fixed_airport",
-            "fixed_airport_inspection",
-            "固定机场",
-            "固定机场巡检",
-            "固定机场工单",
-            "机场",
-        }
-        or "机场" in value
-        or "airport" in value
-        or "dock" in value
-        or "机巢" in value
-    )
+    return work_order_group(item) == "covered"

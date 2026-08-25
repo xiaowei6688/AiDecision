@@ -1148,6 +1148,40 @@ def test_inspection_work_order_verification_accumulates_all_completed_groups(
     assert result["completedGroups"] == ["covered", "uncovered"]
 
 
+def test_inspection_work_order_verification_normalizes_legacy_method_labels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def query(self, datasource: str, question: str) -> dict[str, object]:
+            if "已创建成功的所有巡检工单" in question:
+                rows = [
+                    {"id": "order-covered", "inspection_method": "固定机场巡检"},
+                    {"id": "order-uncovered", "inspection_method": "人工飞手无人机巡检"},
+                ]
+            else:
+                rows = [{
+                    "work_order_no": "WO-3",
+                    "inspection_method": "人工飞手无人机巡检",
+                    "plan_guid": "plan-guid-1",
+                }]
+            return {"status": "success", "data": {"rows": rows}}
+
+    monkeypatch.setattr(
+        "app.integrations.inspection.workflows.get_inspection_settings",
+        lambda: InspectionSettings(_env_file=None, text_to_sql_datasource="inspection_mysql"),
+    )
+    monkeypatch.setattr("app.integrations.inspection.workflows.TextToSqlClient", FakeClient)
+
+    result = inspection_query_work_order_detail.invoke({"order_id": "order-uncovered"})
+
+    assert result["ok"] is True
+    assert result["completedGroup"] == "uncovered"
+    assert result["completedGroups"] == ["covered", "uncovered"]
+
+
 def test_inspection_query_device_data_uses_legacy_question_and_maps_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, object]] = []
 

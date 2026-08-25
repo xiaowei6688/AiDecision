@@ -49,6 +49,7 @@ from app.integrations.inspection.work_order_summary import (
     merge_created_work_orders as _merge_created_work_orders,
     work_order_aliases as _work_order_aliases,
     work_order_final_summary as _work_order_final_summary,
+    work_order_group as _work_order_group,
 )
 from app.integrations.inspection.work_order_cycle import normalize_work_order_cycle_fields
 from app.tools.datetime_tool import resolve_datetime_expression
@@ -411,16 +412,7 @@ def inspection_query_work_order_detail(order_id: str) -> dict[str, Any]:
         return _error("work_order_not_found", f"未查询到工单 ID {normalized} 的入库记录")
     work_order = rows[0]
     plan_guid = _first_present(work_order, "plan_guid", "planGuid")
-    inspection_method = str(
-        _first_present(work_order, "inspection_method", "inspectionMethod") or ""
-    ).lower()
-    completed_group = (
-        "covered"
-        if inspection_method == "dock"
-        else "uncovered"
-        if inspection_method == "drone"
-        else None
-    )
+    completed_group = _work_order_group(work_order)
     if not plan_guid:
         return _error(
             "work_order_plan_missing",
@@ -439,14 +431,10 @@ def inspection_query_work_order_detail(order_id: str) -> dict[str, Any]:
         _rows_from_text2sql_result(created_result),
         {**work_order, "id": _first_present(work_order, "id", "workOrderId") or normalized},
     )
-    completed_methods = {
-        str(_first_present(item, "inspection_method", "inspectionMethod") or "").lower()
-        for item in [work_order, *created_work_orders]
-    }
     completed_groups = [
         group
-        for group, method in (("covered", "dock"), ("uncovered", "drone"))
-        if method in completed_methods
+        for group in ("covered", "uncovered")
+        if any(_work_order_group(item) == group for item in [work_order, *created_work_orders])
     ]
     return {
         "ok": True,

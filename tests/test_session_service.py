@@ -875,6 +875,22 @@ def test_normalize_event_does_not_expose_unregistered_tool_name() -> None:
     assert tool_name not in normalized["content"]
 
 
+def test_normalize_event_hides_internal_file_tool_call() -> None:
+    service = SessionService(agent=None)
+    event = {
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "read_file", "id": "call-1", "args": {}}],
+            )
+        ]
+    }
+
+    normalized = service._normalize_event("session-1", event)
+
+    assert normalized["type"] == "dst_state"
+
+
 def test_normalize_event_does_not_emit_thinking_step_for_human_input_tool_call() -> None:
     service = SessionService(agent=None)
     event = {

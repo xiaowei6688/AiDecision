@@ -49,6 +49,41 @@ def work_order_aliases(item: dict[str, Any]) -> set[str]:
     }
 
 
+def work_order_group(order: dict[str, Any]) -> str | None:
+    """根据业务系统的巡检方式枚举判断工单所属的覆盖组。"""
+
+    explicit_group = str(first_present(order, "group", "workOrderGroup") or "").strip().lower()
+    if explicit_group in {"covered", "uncovered"}:
+        return explicit_group
+
+    value = str(
+        first_present(
+            order,
+            "inspection_method",
+            "inspectionMethod",
+            "inspection_way",
+            "inspectionWay",
+            "work_order_type",
+            "workOrderType",
+        )
+        or ""
+    ).strip()
+    normalized = value.lower()
+    if (
+        normalized in {"dock", "fixed_dock", "fixed_airport", "fixed_airport_inspection"}
+        or any(marker in normalized for marker in ("airport", "dock"))
+        or any(marker in value for marker in ("机场", "机巢"))
+    ):
+        return "covered"
+    if (
+        normalized == "drone"
+        or "drone" in normalized
+        or any(marker in value for marker in ("无人机", "飞手"))
+    ):
+        return "uncovered"
+    return None
+
+
 def work_order_final_summary(
     created_work_orders: list[dict[str, Any]],
     *,
@@ -76,10 +111,9 @@ def work_order_final_summary(
 
 def display_work_order_method(order: dict[str, Any]) -> str:
     value = str(first_present(order, "inspection_method", "inspectionMethod") or "")
-    normalized = value.lower()
-    if normalized == "dock" or "机场" in value:
+    if work_order_group(order) == "covered":
         return "固定机场"
-    if normalized == "drone" or "无人机" in value:
+    if work_order_group(order) == "uncovered":
         return "无人机"
     return value or "巡检"
 

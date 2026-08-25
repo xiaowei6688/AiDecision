@@ -832,6 +832,14 @@ class SessionService(SessionEventProjection):
             "update_task_progress",
             "update_dialogue_state",
             "write_todos",
+            # DeepAgent 的工作区维护工具不代表可向用户展示的业务推理步骤。
+            "read_file",
+            "write_file",
+            "edit_file",
+            "list_files",
+            "search_files",
+            "glob",
+            "grep",
         }
 
     def _frontend_callback_completion_from_event(self, event: Any) -> dict[str, Any] | None:

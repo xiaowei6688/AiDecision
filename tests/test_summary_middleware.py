@@ -168,11 +168,11 @@ def test_business_continuation_forces_direct_business_agent_consultation() -> No
         handler,
     )
 
-    assert result == "ok"
-    assert captured["request"].tool_choice == "continue_business_workflow"
-    assert "禁止调用业务发现或协作规划工具" in (
-        captured["request"].system_message.text
-    )
+    assert captured == {}
+    assert isinstance(result, ModelResponse)
+    tool_call = result.result[0].tool_calls[0]
+    assert tool_call["name"] == "continue_business_workflow"
+    assert tool_call["args"] == {}
 
 
 def test_business_continuation_does_not_affect_normal_user_message() -> None:

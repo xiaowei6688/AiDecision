@@ -75,7 +75,7 @@ class BusinessContinuationMiddleware(AgentMiddleware):
 
     name = "business_continuation"
 
-    def _augment(self, request: ModelRequest) -> ModelRequest:
+    def _continuation(self, request: ModelRequest) -> dict[str, object] | None:
         metadata = request.state.get("metadata")
         continuation = (
             metadata.get("business_continuation")
@@ -89,6 +89,26 @@ class BusinessContinuationMiddleware(AgentMiddleware):
             or not isinstance(last_message, HumanMessage)
             or "businessContinuation" not in _message_text(last_message.content)
         ):
+            return None
+        return continuation
+
+    def _response(self, request: ModelRequest) -> ModelResponse | None:
+        if self._continuation(request) is None:
+            return None
+        # continuation 已由插件 actionResult 处理器完成路由。这里直接生成工具调用，
+        # 不让模型从压缩历史中重新判断意图或调用内部文件工具。
+        return ModelResponse(result=[AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "continue_business_workflow",
+                "args": {},
+                "id": f"continuation_{uuid4().hex}",
+                "type": "tool_call",
+            }],
+        )])
+
+    def _augment(self, request: ModelRequest) -> ModelRequest:
+        if self._continuation(request) is None:
             return request
 
         base = request.system_message
@@ -109,14 +129,16 @@ class BusinessContinuationMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        return handler(self._augment(request))
+        direct = self._response(request)
+        return direct if direct is not None else handler(self._augment(request))
 
     async def awrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        return await handler(self._augment(request))
+        direct = self._response(request)
+        return direct if direct is not None else await handler(self._augment(request))
 
 
 class SummaryInjectionMiddleware(AgentMiddleware):

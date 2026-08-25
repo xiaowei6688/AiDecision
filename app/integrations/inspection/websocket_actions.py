@@ -68,7 +68,9 @@ def inspection_action_result_to_resume(
 
 
 def _action_code(client_event: WebSocketClientEvent, action_result: dict[str, Any]) -> str | None:
-    value = client_event.action_code or action_result.get("actionCode") or action_result.get("action_code")
+    # 业务后端回执中的动作码是当前操作的权威来源。旧前端复用对象时，
+    # 外层 actionCode 可能残留上一轮计划/工单动作，不能据此续接错误流程。
+    value = action_result.get("actionCode") or action_result.get("action_code") or client_event.action_code
     return str(value) if value not in (None, "") else None
 
 

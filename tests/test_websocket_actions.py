@@ -98,6 +98,32 @@ def test_inspection_work_order_extracts_id_from_legacy_nested_action_result() ->
     )
 
 
+def test_inspection_action_result_prefers_current_nested_action_code() -> None:
+    event = WebSocketClientEvent.model_validate({
+        "type": "actionResult",
+        "session_id": "session-1",
+        # 模拟旧前端复用请求对象时残留的上一轮动作码。
+        "action_code": "createPlan",
+        "action_result": {
+            "action_code": "createTempOrder",
+            "data": {
+                "code": 200,
+                "success": True,
+                "data": "order-2",
+            },
+        },
+    })
+
+    request = inspection_action_result_to_resume(event)
+
+    assert request is not None
+    assert request.data["actionCode"] == "createTempOrder"
+    assert request.data["workOrderId"] == "order-2"
+    assert request.data["businessContinuation"]["operation"] == (
+        "verify_work_order_and_continue"
+    )
+
+
 def test_inspection_action_result_does_not_treat_false_string_as_success() -> None:
     event = WebSocketClientEvent.model_validate({
         "type": "actionResult",
