@@ -173,6 +173,76 @@ class SummaryInjectionMiddleware(AgentMiddleware):
         return await handler(self._augment(request))
 
 
+class ModelProgressProtocolMiddleware(AgentMiddleware):
+    """要求模型在多步骤工具任务前先声明可展示的推理进度。"""
+
+    name = "model_progress_protocol"
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        response = handler(request)
+        return response if not self._requires_progress(request, response) else handler(
+            self._progress_retry_request(request)
+        )
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        response = await handler(request)
+        if not self._requires_progress(request, response):
+            return response
+        return await handler(self._progress_retry_request(request))
+
+    def _requires_progress(self, request: ModelRequest, response: ModelResponse) -> bool:
+        calls = [
+            call
+            for message in response.result
+            if isinstance(message, AIMessage)
+            for call in (message.tool_calls or [])
+            if isinstance(call, dict)
+        ]
+        tool_names = {str(call.get("name") or "") for call in calls}
+        if "update_task_progress" in tool_names:
+            return False
+        if self._has_active_progress(request):
+            return False
+        # 只有模型已经准备执行可见业务/查询工具时才纠正；普通回答和框架维护工具
+        # 不需要额外制造进度步骤。
+        return bool(tool_names - _PROGRESS_EXEMPT_TOOL_NAMES)
+
+    def _has_active_progress(self, request: ModelRequest) -> bool:
+        # state 由 update_task_progress 写入；只要还有 running/pending 步骤，
+        # 后续工具调用属于同一轮模型声明的进度计划。
+        metadata = request.state.get("metadata")
+        progress = metadata.get("task_progress") if isinstance(metadata, dict) else None
+        steps = progress.get("steps") if isinstance(progress, dict) else None
+        return isinstance(steps, list) and any(
+            isinstance(step, dict) and step.get("status") in {"running", "pending"}
+            for step in steps
+        )
+
+    def _progress_retry_request(self, request: ModelRequest) -> ModelRequest:
+        base = request.system_message
+        base_text = base.text if base is not None else ""
+        correction = (
+            "进度协议纠正：你即将执行多步骤工具任务，但尚未先声明面向用户的推理进度。"
+            "现在必须且只能先调用 update_task_progress：根据当前用户目标生成 2 到 5 个简短、"
+            "具体、业务可理解的步骤；第一步 status=running，其余步骤 status=pending。"
+            "步骤要描述正在核对的事实、业务条件或待组装的数据，禁止写工具名、文件名、内部状态或隐藏推理。"
+            "后续每完成一个真实步骤，再调用 update_task_progress 将该步骤更新为 completed 并推进下一步。"
+        )
+        merged = f"{base_text}\n\n{correction}" if base_text else correction
+        return request.override(
+            system_message=SystemMessage(content=merged),
+            tool_choice="update_task_progress",
+        )
+
+
 class ConfirmationProtocolMiddleware(AgentMiddleware):
     """通过结构化动作工具重试最终文本中的动作确认。"""
 
@@ -246,6 +316,17 @@ def _asks_for_confirmation(text: str) -> bool:
         "reply yes or no",
         "confirm whether",
     ))
+
+
+_PROGRESS_EXEMPT_TOOL_NAMES = frozenset({
+    "update_task_progress",
+    "update_dialogue_state",
+    "write_todos",
+    "request_human_input",
+    "human_input",
+    "continue_business_workflow",
+    "call_business_action",
+})
 
 
 def _mentions_action(text: str, action: ActionSpec) -> bool:

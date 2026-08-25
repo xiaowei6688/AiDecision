@@ -131,11 +131,23 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
                     await _send_error(websocket, session_id, "invalid_resume", str(exc))
                     continue
 
-                event = await session_service.resume_event(event_session_id, resume_request)
-                event["request_id"] = client_event.request_id
-                event["parent_message_id"] = client_event.message_id
-                event["session_id"] = event_session_id
-                await _send_event(websocket, event)
+                stream_resume = getattr(session_service, "stream_resume", None)
+                if callable(stream_resume):
+                    events = stream_resume(event_session_id, resume_request)
+                else:
+                    # 兼容注入式或第三方 SessionService 的既有单事件实现。
+                    async def single_resume_event():
+                        yield await session_service.resume_event(
+                            event_session_id,
+                            resume_request,
+                        )
+
+                    events = single_resume_event()
+                async for event in events:
+                    event["request_id"] = client_event.request_id
+                    event["parent_message_id"] = client_event.message_id
+                    event["session_id"] = event_session_id
+                    await _send_event(websocket, event)
                 continue
 
             if not client_event.content:

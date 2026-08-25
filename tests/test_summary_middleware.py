@@ -8,6 +8,7 @@ from app.agents.middleware import (
     BusinessContinuationMiddleware,
     ConfirmationProtocolMiddleware,
     DirectResultMiddleware,
+    ModelProgressProtocolMiddleware,
     SummaryInjectionMiddleware,
 )
 from app.integrations.inspection.actions import CREATE_PLAN
@@ -196,6 +197,96 @@ def test_business_continuation_does_not_affect_normal_user_message() -> None:
     )
 
     assert captured["request"].tool_choice is None
+
+
+def test_model_progress_protocol_requires_model_declared_progress_before_tool_work() -> None:
+    middleware = ModelProgressProtocolMiddleware()
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return ModelResponse(result=[AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "semantic_query",
+                    "id": "query-1",
+                    "args": {"question": "查询设备"},
+                }],
+            )])
+        return ModelResponse(result=[AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "update_task_progress",
+                "id": "progress-1",
+                "args": {
+                    "steps": [
+                        {"id": "check", "title": "核对设备范围", "status": "running"},
+                        {"id": "assemble", "title": "整理巡检数据", "status": "pending"},
+                    ],
+                },
+            }],
+        )])
+
+    result = middleware.wrap_model_call(_make_request({"messages": []}), handler)
+
+    assert len(requests) == 2
+    assert requests[1].tool_choice == "update_task_progress"
+    assert "第一步 status=running" in requests[1].system_message.text
+    assert result.result[0].tool_calls[0]["name"] == "update_task_progress"
+
+
+def test_model_progress_protocol_does_not_repeat_existing_progress_call() -> None:
+    middleware = ModelProgressProtocolMiddleware()
+    calls = 0
+
+    def handler(_request):
+        nonlocal calls
+        calls += 1
+        return ModelResponse(result=[AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "update_task_progress",
+                "id": "progress-1",
+                "args": {"steps": []},
+            }],
+        )])
+
+    middleware.wrap_model_call(_make_request({"messages": []}), handler)
+
+    assert calls == 1
+
+
+def test_model_progress_protocol_uses_existing_active_progress_plan() -> None:
+    middleware = ModelProgressProtocolMiddleware()
+    calls = 0
+
+    def handler(_request):
+        nonlocal calls
+        calls += 1
+        return ModelResponse(result=[AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "semantic_query",
+                "id": "query-1",
+                "args": {"question": "查询设备"},
+            }],
+        )])
+
+    result = middleware.wrap_model_call(_make_request({
+        "messages": [],
+        "metadata": {
+            "task_progress": {
+                "steps": [
+                    {"id": "check", "status": "running"},
+                    {"id": "assemble", "status": "pending"},
+                ]
+            }
+        },
+    }), handler)
+
+    assert calls == 1
+    assert result.result[0].tool_calls[0]["name"] == "semantic_query"
 
 
 def test_confirmation_protocol_retries_registered_action_confirmation() -> None:

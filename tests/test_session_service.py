@@ -132,6 +132,35 @@ class NestedToolProgressAgent:
         return type("Snapshot", (), {"values": {}})()
 
 
+class ModelProgressWithCompletedToolAgent:
+    async def astream(self, payload: dict[str, Any], **kwargs: Any):
+        yield {
+            "task_progress": {
+                "steps": [{
+                    "id": "interpret-time",
+                    "title": "解析巡检时间",
+                    "status": "running",
+                }]
+            }
+        }
+        yield {
+            "messages": [AIMessage(
+                content="",
+                tool_calls=[{"name": "compute_datetime", "id": "time-call", "args": {}}],
+            )]
+        }
+        yield {
+            "messages": [ToolMessage(
+                content=json.dumps({"date": "2026-08-26"}),
+                tool_call_id="time-call",
+            )]
+        }
+        yield {"messages": [AIMessage(content="日期已确认")]}
+
+    async def aget_state(self, config: dict[str, Any]) -> Any:
+        return type("Snapshot", (), {"values": {}})()
+
+
 class PendingProgressAgent:
     async def astream(self, payload: dict[str, Any], **kwargs: Any):
         yield {
@@ -381,6 +410,45 @@ def test_active_progress_is_completed_before_human_action_required() -> None:
     assert events.index(thinking[1]) < events.index(human[0])
 
 
+def test_resume_event_does_not_return_an_orphan_running_step() -> None:
+    class ResumeRunningAgent:
+        async def ainvoke(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            return {"task_progress": {"steps": [{
+                "id": "resume-check",
+                "title": "核对恢复条件",
+                "status": "running",
+            }]}}
+
+    service = SessionService(agent=ResumeRunningAgent())
+    request = type("Request", (), {"action": "approve", "content": None, "data": {}})()
+
+    event = asyncio.run(service.resume_event("session-1", request))
+
+    assert event["type"] == "thinking_step"
+    assert event["data"]["status"] == "completed"
+
+
+def test_stream_resume_pairs_running_step_with_completed() -> None:
+    class ResumeRunningAgent:
+        async def ainvoke(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            return {"task_progress": {"steps": [{
+                "id": "resume-check",
+                "title": "核对恢复条件",
+                "status": "running",
+            }]}}
+
+    service = SessionService(agent=ResumeRunningAgent())
+    request = type("Request", (), {"action": "approve", "content": None, "data": {}})()
+
+    async def collect() -> list[dict[str, Any]]:
+        return [event async for event in service.stream_resume("session-1", request)]
+
+    events = asyncio.run(collect())
+
+    assert [event["data"]["status"] for event in events] == ["running", "completed"]
+    assert events[0]["data"]["step_id"] == events[1]["data"]["step_id"]
+
+
 def test_sequential_steps_complete_before_the_next_step_starts() -> None:
     service = SessionService(agent=MultipleRunningStepsAgent())
 
@@ -421,6 +489,32 @@ def test_nested_tool_does_not_prematurely_complete_parent_task_step() -> None:
         "completed",
         "completed",
     ]
+
+
+def test_completed_tool_closes_the_current_model_declared_step() -> None:
+    context = PluginContext()
+    context.tools.register_step(
+        "compute_datetime",
+        "核对日期时间",
+        "正在根据当前日期和业务时区核对时间表达",
+    )
+    service = SessionService(
+        agent=ModelProgressWithCompletedToolAgent(),
+        plugin_context=context,
+    )
+
+    events = asyncio.run(_collect_stream(service))
+    thinking = [event for event in events if event["type"] == "thinking_step"]
+
+    assert [event["data"]["status"] for event in thinking] == [
+        "running",
+        "running",
+        "completed",
+        "completed",
+    ]
+    assert thinking[0]["data"]["step_name"] == "解析巡检时间"
+    assert thinking[2]["data"]["step_id"] == thinking[0]["data"]["step_id"]
+    assert thinking[3]["data"]["step_id"] == thinking[1]["data"]["step_id"]
 
 
 def test_pending_progress_is_not_emitted_to_frontend() -> None:

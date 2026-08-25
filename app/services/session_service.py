@@ -474,6 +474,26 @@ class SessionService(SessionEventProjection):
             active_steps[step_id] = running
             events.append(running)
 
+        # 模型先用 update_task_progress 声明的步骤属于“用户可见推理计划”，
+        # 随后的真实工具完成才代表该计划中的当前步骤已落地。模型不一定会
+        # 再主动回写 completed，因此在工具终态时自动收口一个当前模型步骤。
+        if status in {"completed", "failed"} and sequential_source == "tool_call":
+            task_step_id = next(
+                (
+                    active_id
+                    for active_id, active_event in active_steps.items()
+                    if self._sequential_thinking_source(active_event) == "task_progress"
+                ),
+                None,
+            )
+            if task_step_id is not None:
+                events.extend(self._finalize_thinking_steps(
+                    active_steps,
+                    statuses,
+                    status=status,
+                    step_ids={task_step_id},
+                ))
+
         key = (step_id, status)
         if key in statuses:
             return events
@@ -532,7 +552,33 @@ class SessionService(SessionEventProjection):
         """恢复暂停的图，并返回WebSocket友好的事件."""
 
         result = await self._resume(session_id, request)
-        return self._normalize_event(session_id, result)
+        event = self._normalize_event(session_id, result)
+        # HTTP 的 resume 是单响应接口，不能传输一对生命周期事件；不能让它
+        # 暴露孤立 running，直接返回该轮结束后的终态。
+        if event.get("type") == ServerEventType.THINKING_STEP.value:
+            data = event.get("data")
+            if isinstance(data, dict) and data.get("status") == "running":
+                return {**event, "data": {**data, "status": "completed"}}
+        return event
+
+    async def stream_resume(
+        self,
+        session_id: str,
+        request: HumanResumeRequest,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """恢复中断，并保证 WebSocket 进度步骤具有完整生命周期。"""
+
+        result = await self._resume(session_id, request)
+        event = self._normalize_event(session_id, result)
+        if event.get("type") != ServerEventType.THINKING_STEP.value:
+            yield event
+            return
+        data = event.get("data")
+        if not isinstance(data, dict) or data.get("status") != "running":
+            yield event
+            return
+        yield event
+        yield {**event, "data": {**data, "status": "completed"}}
 
     async def _resume(
         self,

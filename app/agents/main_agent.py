@@ -9,6 +9,7 @@ from app.agents.middleware import (
     BusinessContinuationMiddleware,
     ConfirmationProtocolMiddleware,
     DirectResultMiddleware,
+    ModelProgressProtocolMiddleware,
     SummaryInjectionMiddleware,
 )
 from app.agents.state import DecisionDSTState
@@ -36,6 +37,7 @@ def build_main_agent(
             SummaryInjectionMiddleware(),
             BusinessContinuationMiddleware(),
             DirectResultMiddleware(),
+            ModelProgressProtocolMiddleware(),
             ConfirmationProtocolMiddleware(plugin_context.action_registry.list()),
         ],
         state_schema=DecisionDSTState,
