@@ -1,7 +1,12 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.chat import ClientEventType, SessionStateResponse, WebSocketClientEvent
+from app.schemas.chat import (
+    ClientEventType,
+    HumanResumeRequest,
+    SessionStateResponse,
+    WebSocketClientEvent,
+)
 
 
 def test_websocket_client_event_validates_message_payload() -> None:
@@ -41,3 +46,9 @@ def test_session_state_exposes_generic_domain_state() -> None:
     )
 
     assert state.domain_state["inspection"]["workOrderFillState"]["status"] == "READY"
+
+
+def test_human_resume_accepts_frontend_defined_action() -> None:
+    request = HumanResumeRequest.model_validate({"action": "flyMonitor"})
+
+    assert request.action == "flyMonitor"

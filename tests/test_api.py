@@ -475,7 +475,8 @@ def test_inspection_defect_notification_keeps_real_counts() -> None:
     assert response.status_code == 200
     assert response.json()["delivered"] == 1
     assert "共识别缺陷 5 处" in event["content"]
-    assert "严重缺陷：1 处" in event["content"]
+    assert "│ 严重缺陷    │ 1 处  │" in event["content"]
+    assert "缺陷总数：5" in event["content"]
     action = event["data"]["interrupts"][0]
     assert action["actionCode"] == "openRecognitionTask"
     assert action["executePayload"] == {

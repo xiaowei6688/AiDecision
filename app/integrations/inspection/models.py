@@ -70,10 +70,21 @@ class CreateInspectionWorkOrderInput(BaseModel):
     work_content: str = Field(min_length=1, max_length=100, alias="workContent")
     equip_sn: str | None = Field(default=None, alias="equipSn")
     flight_workers: str | list[str] | None = Field(default=None, alias="flightWorkers")
+    other_workers: str | None = Field(default=None, alias="otherWorkers")
+    drone_list: list[dict[str, Any]] | None = Field(default=None, alias="droneList")
     photo_storage_type: str | None = Field(default=None, alias="photoStorageType")
     pano_shot: bool = Field(default=False, alias="panoShot")
     is_record: str | int | None = Field(default=None, alias="isRecord")
     is_terrain: bool = Field(default=False, alias="isTerrain")
+    work_cycle_type: str | None = Field(default=None, alias="workCycleType")
+    cycle_start_date: str | None = Field(default=None, alias="cycleStartDate")
+    cycle_end_date: str | None = Field(default=None, alias="cycleEndDate")
+    cycle_inspect_start_time: str | None = Field(default=None, alias="cycleInspectStartTime")
+    cycle_inspect_end_time: str | None = Field(default=None, alias="cycleInspectEndTime")
+    day_dates: list[str] | None = Field(default=None, alias="dayDates")
+    week_days: list[int] | None = Field(default=None, alias="weekDays")
+    month_days: list[int] | None = Field(default=None, alias="monthDays")
+    year_dates: list[dict[str, Any]] | None = Field(default=None, alias="yearDates")
 
     model_config = {"populate_by_name": True}
 

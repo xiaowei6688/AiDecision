@@ -238,6 +238,32 @@ def test_inspection_work_orders_are_split_and_advanced_one_group_at_a_time() -> 
     }
 
 
+def test_inspection_work_order_keeps_legacy_cycle_contract() -> None:
+    result = inspection_build_work_order_fill_state.invoke({
+        "plan": {
+            "planGuid": "plan-week-1",
+            "planType": "3",
+            "inspectStartTime": "2026-08-03 08:00:00",
+            "inspectEndTime": "2026-08-04 18:00:00",
+        },
+        "coverage_rows": [{
+            "deviceGuid": "tower-1",
+            "parentDeviceGuid": "line-1",
+            "major": "dms",
+            "dockGuid": "dock-1",
+        }],
+    })
+
+    payload = result["workOrderFillState"]["executePayload"]
+    assert payload["isCycle"] == "1"
+    assert payload["workCycleType"] == "WEEK"
+    assert payload["cycleStartDate"] == "2026-08-03"
+    assert payload["cycleEndDate"] == "2026-08-04"
+    assert payload["weekDays"] == [1, 2]
+    assert payload["startDate"] == "2026-08-03 00:00:00"
+    assert payload["endDate"] == "2026-08-04 23:59:59"
+
+
 def test_inspection_uncovered_work_order_requires_real_resources() -> None:
     result = inspection_build_work_order_fill_state.invoke({
         "plan": {

@@ -84,6 +84,7 @@ def _build_detect_result_event(content: DetectResultNotification) -> dict[str, A
             "routePath": "/AI/recognition-chongqing/index",
             "executeApi": None,
             "executeMethod": None,
+            "executeTemplate": {"recognitionTaskGuid": "${recognitionTaskGuid}"},
             "executePayload": {
                 "recognitionTaskGuid": content.recognitionTaskGuid,
                 "workOrderNo": content.workOrderNo,
@@ -93,6 +94,7 @@ def _build_detect_result_event(content: DetectResultNotification) -> dict[str, A
         "routePath": "/AI/recognition-chongqing/index",
         "executeApi": None,
         "executeMethod": None,
+        "executeTemplate": {"recognitionTaskGuid": "${recognitionTaskGuid}"},
         "executePayload": {
             "recognitionTaskGuid": content.recognitionTaskGuid,
             "workOrderNo": content.workOrderNo,
@@ -124,6 +126,12 @@ def _build_start_flying_event(content: StartFlyingNotification) -> dict[str, Any
                 "dockSn": content.dockSn,
                 "droneSn": content.droneSn,
             },
+            "workOrderContext": {
+                "workOrderId": content.workOrderId,
+                "workOrderNo": content.workOrderNo,
+                "dockSn": content.dockSn,
+                "droneSn": content.droneSn,
+            },
             "routePath": "/flightMonitoring/${dockSn}",
             "executeApi": "",
             "executeMethod": "",
@@ -147,13 +155,16 @@ def _detect_result_summary(content: DetectResultNotification) -> str:
     return (
         f"【巡检计划完成提醒】{date.today().isoformat()} {_task_title(content.taskName)}已全部完成\n"
         f"共识别缺陷 {content.totalDefects} 处\n"
-        f"危急缺陷：{content.criticalDefects} 处\n"
-        f"严重缺陷：{content.seriousDefects} 处\n"
-        f"一般缺陷：{content.normalDefects} 处\n\n"
+        "┌─────────────┬───────┐\n"
+        f"│ 危急缺陷    │ {content.criticalDefects} 处  │\n"
+        f"│ 严重缺陷    │ {content.seriousDefects} 处  │\n"
+        f"│ 一般缺陷    │ {content.normalDefects} 处  │\n"
+        "└─────────────┴───────┘\n\n"
         f"工单编号：{content.workOrderId}\n"
         f"任务名称：{content.taskName}\n"
         f"图片总数：{content.totalPictures}\n"
         f"缺陷图片数：{content.defectPictures}\n"
+        f"缺陷总数：{content.totalDefects}\n"
     )
 
 

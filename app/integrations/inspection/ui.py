@@ -271,15 +271,43 @@ _LEGACY_FIELD_NAMES = {
     "work_content": "workContent",
     "equip_sn": "equipSn",
     "flight_workers": "flightWorkers",
+    "other_workers": "otherWorkers",
+    "drone_list": "droneList",
     "photo_storage_type": "photoStorageType",
     "pano_shot": "panoShot",
     "is_record": "isRecord",
     "is_terrain": "isTerrain",
+    "work_cycle_type": "workCycleType",
+    "cycle_start_date": "cycleStartDate",
+    "cycle_end_date": "cycleEndDate",
+    "cycle_inspect_start_time": "cycleInspectStartTime",
+    "cycle_inspect_end_time": "cycleInspectEndTime",
+    "day_dates": "dayDates",
+    "week_days": "weekDays",
+    "month_days": "monthDays",
+    "year_dates": "yearDates",
 }
 
 
 def _legacy_payload(params: dict[str, Any]) -> dict[str, Any]:
-    return {_LEGACY_FIELD_NAMES.get(key, key): value for key, value in params.items()}
+    return {
+        _LEGACY_FIELD_NAMES.get(key, key): value
+        for key, value in params.items()
+        if not (key in _CYCLE_FIELD_NAMES and value is None)
+    }
+
+
+_CYCLE_FIELD_NAMES = {
+    "work_cycle_type",
+    "cycle_start_date",
+    "cycle_end_date",
+    "cycle_inspect_start_time",
+    "cycle_inspect_end_time",
+    "day_dates",
+    "week_days",
+    "month_days",
+    "year_dates",
+}
 
 
 def _first_non_empty(value: dict[str, Any], *keys: str) -> str | None:

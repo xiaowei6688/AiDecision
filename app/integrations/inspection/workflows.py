@@ -50,6 +50,7 @@ from app.integrations.inspection.work_order_summary import (
     work_order_aliases as _work_order_aliases,
     work_order_final_summary as _work_order_final_summary,
 )
+from app.integrations.inspection.work_order_cycle import normalize_work_order_cycle_fields
 from app.tools.datetime_tool import resolve_datetime_expression
 
 
@@ -595,6 +596,7 @@ def inspection_build_work_order_fill_state(
         "isTerrain": False,
         "orderDetailList": details,
     }
+    normalize_work_order_cycle_fields(payload, normalized_plan)
     ready = bool(details) and not missing_fields
     state = {
         "intentCode": "createTempOrder",

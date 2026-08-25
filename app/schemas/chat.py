@@ -1,7 +1,7 @@
 """对话、DST 状态和人在回路事件的 API 数据结构。"""
 
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -140,7 +140,7 @@ class WebSocketServerEvent(BaseModel):
 class HumanResumeRequest(BaseModel):
     """恢复暂停的人在回路运行的有效载荷."""
 
-    action: Literal["approve", "reject", "edit", "clarify"]
+    action: str = Field(min_length=1)
     content: str | None = None
     data: dict[str, Any] = Field(default_factory=dict)
 

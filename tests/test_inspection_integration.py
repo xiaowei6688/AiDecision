@@ -1291,6 +1291,34 @@ async def test_inspection_adapter_returns_frontend_callback_contract(monkeypatch
     }
 
 
+@pytest.mark.asyncio
+async def test_inspection_adapter_preserves_legacy_cycle_and_drone_fields() -> None:
+    result = await InspectionAdapter().invoke(
+        "create_work_order",
+        {
+            "plan_guid": "plan-1",
+            "inspection_method": "drone",
+            "start_date": "2026-08-03 00:00:00",
+            "end_date": "2026-08-04 23:59:59",
+            "work_cycle_type": "WEEK",
+            "cycle_start_date": "2026-08-03",
+            "cycle_end_date": "2026-08-04",
+            "cycle_inspect_start_time": "08:00:00",
+            "cycle_inspect_end_time": "18:00:00",
+            "week_days": [1, 2],
+            "drone_list": [{"droneSn": "drone-1"}],
+            "other_workers": "worker-2",
+        },
+        ActionExecutionContext(session_id="session-1"),
+    )
+
+    payload = result["executePayload"]
+    assert payload["workCycleType"] == "WEEK"
+    assert payload["weekDays"] == [1, 2]
+    assert payload["droneList"] == [{"droneSn": "drone-1"}]
+    assert payload["otherWorkers"] == "worker-2"
+
+
 def test_inspection_notification_builds_legacy_event_payload() -> None:
     request = InspectionNotificationRequest.model_validate(
         {
@@ -1307,4 +1335,36 @@ def test_inspection_notification_builds_legacy_event_payload() -> None:
     event = build_notification_event(request)
 
     assert event["type"] == "human_action_required"
-    assert event["data"]["interrupts"][0]["actionCode"] == "flightMonitoring"
+    action = event["data"]["interrupts"][0]
+    assert action["actionCode"] == "flightMonitoring"
+    assert action["payload"]["workOrderContext"] == {
+        "workOrderId": 123,
+        "workOrderNo": "GD20250101",
+        "dockSn": "dock-1",
+        "droneSn": "drone-1",
+    }
+
+
+def test_inspection_detect_notification_keeps_legacy_action_and_summary_shape() -> None:
+    request = InspectionNotificationRequest.model_validate({
+        "type": "recognizeCompleted",
+        "content": {
+            "workOrderId": "order-1",
+            "recognitionTaskGuid": "recognition-1",
+            "taskName": "白路线巡检任务",
+            "relationSessionId": "session-1",
+            "totalPictures": 10,
+            "defectPictures": 2,
+            "totalDefects": 3,
+            "normalDefects": 1,
+            "seriousDefects": 1,
+            "criticalDefects": 1,
+        },
+    })
+
+    event = build_notification_event(request)
+    action = event["data"]["interrupts"][0]
+
+    assert "┌─────────────┬───────┐" in event["content"]
+    assert "缺陷总数：3" in event["content"]
+    assert action["executeTemplate"] == {"recognitionTaskGuid": "${recognitionTaskGuid}"}
