@@ -10,7 +10,7 @@ from uuid import uuid4
 from app.core.progress import get_progress_channel
 from app.core.runtime_context import get_runtime_context
 from app.integrations.tools import IntegrationToolRegistry
-from app.integrations.direct_results import DirectResult
+from app.integrations.direct_results import DirectResult, direct_result_from_framework_payload
 
 
 @dataclass(frozen=True)
@@ -96,11 +96,13 @@ class ToolBroker:
                 "error_code": "READONLY_TOOL_ERROR",
                 "message": str(exc),
             }
-        direct_result = (
-            self._registry.project_direct_result(request.tool_name, result)
-            if status == "success"
-            else None
-        )
+        direct_result = None
+        if status == "success":
+            # 插件既可以注册专用投影器，也可以直接按框架协议声明直出动作。
+            # 后者避免业务 Agent 将大载荷再次交还模型总结。
+            direct_result = self._registry.project_direct_result(request.tool_name, result)
+            if direct_result is None:
+                direct_result = direct_result_from_framework_payload(result)
         audit = ToolAuditRecord(
             request_id=request_id,
             session_id=runtime.session_id,

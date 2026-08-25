@@ -183,10 +183,16 @@ def _build_consult_business_agents_tool(
                     plugin_context.action_registry,
                     plugin_context.tools,
                     plugin_context.tool_broker,
+                    # 只有单业务咨询能安全提升为主链路直出动作；多业务咨询
+                    # 仍须保留每个 Agent 的完整建议，供主 Agent 汇总。
+                    allow_direct_results=len(selected) == 1,
                 )
                 for agent in selected
             ]
         )
+        direct = _single_direct_result(advice) if len(selected) == 1 else None
+        if direct is not None:
+            return direct
         result: dict[str, Any] = {
             "status": "success",
             "task": task,
@@ -242,11 +248,17 @@ def _build_run_business_collaboration_tool(
                     action_registry,
                     plugin_context.tools,
                     plugin_context.tool_broker,
+                    # 多业务协作可能存在后续依赖，不能由中间业务 Agent
+                    # 提前截断。单业务流程才允许工具结果直接进入动作确认。
+                    allow_direct_results=len(validated.steps) == 1,
                 )
                 for step in wave
             ])
             advice_by_agent.update({result["business_id"]: result for result in results})
         advice = [advice_by_agent[step.business_id] for step in validated.steps]
+        direct = _single_direct_result(advice) if len(validated.steps) == 1 else None
+        if direct is not None:
+            return direct
         result: dict[str, Any] = {
             "status": "success",
             "task": task,
@@ -426,4 +438,23 @@ def _tool_audit_progress(results: list[dict[str, Any]]) -> dict[str, Any] | None
         "failedStep": failed,
         "nextStep": None,
         "summary": steps[-1]["summary"],
+    }
+
+
+def _single_direct_result(results: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """将单业务 Agent 的直出结果提升为主 Agent 可消费的通用工具结果。"""
+
+    if len(results) != 1:
+        return None
+    result = results[0]
+    framework = result.get("_framework") if isinstance(result, dict) else None
+    if not isinstance(framework, dict):
+        return None
+    direct_action = framework.get("direct_action")
+    if not isinstance(direct_action, dict):
+        return None
+    return {
+        "status": "success",
+        "_framework": {"direct_action": direct_action},
+        "tool_audit": result.get("tool_audit", []),
     }

@@ -34,6 +34,37 @@ def test_inspection_work_order_workflow_preserves_legacy_fill_state() -> None:
     assert direct.params == state["executePayload"]
 
 
+def test_inspection_work_order_detail_keeps_legacy_fixed_display_fields() -> None:
+    result = inspection_build_work_order_fill_state.invoke({
+        "plan": {
+            "planGuid": "plan-1",
+            "planType": "5",
+            "inspectStartTime": "2026-08-26 08:00:00",
+            "inspectEndTime": "2026-08-26 18:00:00",
+        },
+        "coverage_rows": [{
+            "deviceGuid": "tower-1",
+            "parentDeviceGuid": "line-1",
+            "deviceName": "10kV白路线#1",
+            "parentDeviceName": "10kV白路线",
+            "major": "dms",
+            "dockGuid": "dock-1",
+            "dockList": [{"dockGuid": "dock-1"}],
+            "promptInformation": "should-not-leak",
+            "disabled": True,
+            "terrain": True,
+        }],
+    })
+
+    detail = result["workOrderFillState"]["executePayload"]["orderDetailList"][0]
+
+    assert detail["dockList"] is None
+    assert detail["promptInformation"] is None
+    assert detail["disabled"] is False
+    assert detail["terrain"] is False
+    assert detail["workNature"] is None
+
+
 def test_inspection_work_order_accepts_stringified_model_arguments() -> None:
     plan = {
         "planGuid": "plan-1",
@@ -60,7 +91,7 @@ def test_inspection_work_order_accepts_stringified_model_arguments() -> None:
     assert result["ok"] is True
     assert detail["deviceGuid"] == "tower-1"
     assert detail["parentDeviceGuid"] == "line-1"
-    assert detail["workNature"] == "fine_inspect_dms"
+    assert detail["workNature"] is None
 
 
 def test_inspection_work_order_accepts_backslash_escaped_model_arguments() -> None:

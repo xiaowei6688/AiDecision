@@ -92,6 +92,45 @@ async def test_tool_broker_projects_completed_result_for_direct_forwarding() -> 
 
 
 @pytest.mark.asyncio
+async def test_tool_broker_uses_framework_direct_action_without_plugin_projector() -> None:
+    context = PluginContext()
+
+    from langchain_core.tools import tool
+
+    @tool
+    def build_record() -> dict[str, object]:
+        """组装记录。"""
+
+        return {
+            "ok": True,
+            "_framework": {
+                "direct_action": {
+                    "action_id": "inventory.create_record",
+                    "params": {"name": "record-1"},
+                }
+            },
+        }
+
+    context.tools.register(build_record, read_only=True)
+    token = set_runtime_context(RequestRuntimeContext(plugin_context=context))
+    try:
+        result = await context.tool_broker.execute(
+            ToolBrokerRequest(
+                business_id="inventory",
+                tool_name="build_record",
+                arguments={},
+            ),
+            ("build_record",),
+        )
+    finally:
+        reset_runtime_context(token)
+
+    assert result.direct_result is not None
+    assert result.direct_result.action_id == "inventory.create_record"
+    assert result.direct_result.params == {"name": "record-1"}
+
+
+@pytest.mark.asyncio
 async def test_tool_broker_injects_runtime_context_and_records_evidence() -> None:
     context = PluginContext()
 

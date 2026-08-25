@@ -18,6 +18,7 @@ from app.tools.dynamic_tools import _consult_business_agent
 from app.integrations.context import PluginContext
 from app.actions.registry import ActionRegistry
 from app.integrations.bootstrap import IntegrationManager
+from app.core.runtime_context import RequestRuntimeContext, reset_runtime_context, set_runtime_context
 
 
 def test_framework_registers_the_inspection_business_agent() -> None:
@@ -208,6 +209,73 @@ async def test_business_agent_can_call_authorized_readonly_tool() -> None:
     assert result.advice.facts_and_constraints == ["库存为3"]
     assert result.tool_audit[0].business_id == "inventory"
     assert result.tool_audit[0].evidence["quantity"] == 3
+
+
+@pytest.mark.asyncio
+async def test_business_agent_stops_after_framework_direct_action() -> None:
+    @tool
+    def build_record() -> dict[str, object]:
+        """组装待确认记录。"""
+
+        return {
+            "ok": True,
+            "_framework": {
+                "direct_action": {
+                    "action_id": "inventory.create_record",
+                    "params": {"name": "record-1"},
+                }
+            },
+        }
+
+    class DirectResultModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def bind_tools(self, tools: list[object]) -> "DirectResultModel":
+            assert [getattr(item, "name", None) for item in tools] == ["build_record"]
+            return self
+
+        async def ainvoke(self, messages: object) -> AIMessage:
+            self.calls += 1
+            if self.calls > 1:
+                raise AssertionError("direct result must not be returned to the model")
+            return AIMessage(content="", tool_calls=[{
+                "name": "build_record",
+                "args": {},
+                "id": "call-1",
+            }])
+
+    manifest = BusinessAgentManifest(
+        business_id="inventory",
+        title="库存",
+        description="测试 Agent",
+        system_prompt="",
+        datasources=("inventory",),
+        action_prefixes=("inventory.",),
+        readonly_tool_names=("build_record",),
+    )
+    model = DirectResultModel()
+    context = PluginContext()
+    context.tools.register(build_record, read_only=True)
+    token = set_runtime_context(RequestRuntimeContext(plugin_context=context))
+    try:
+        result = await build_business_agent_runtime(manifest, model).invoke(
+            BusinessAgentInvocation(
+                manifest=manifest,
+                task="创建记录",
+                context={},
+                available_actions=[],
+                available_tools=(build_record,),
+                tool_broker=context.tool_broker,
+                allow_direct_results=True,
+            )
+        )
+    finally:
+        reset_runtime_context(token)
+
+    assert model.calls == 1
+    assert result.direct_result is not None
+    assert result.direct_result.action_id == "inventory.create_record"
 
 
 def test_business_collaboration_plan_builds_parallel_waves() -> None:

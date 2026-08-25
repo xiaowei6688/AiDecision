@@ -630,7 +630,8 @@ def _row_to_detail(row: dict[str, Any]) -> dict[str, Any] | None:
     return {
         "dockGuid": row.get("dockGuid") or row.get("airportGuid") or row.get("airport_uid"),
         "dockName": row.get("dockName") or row.get("airportName") or row.get("airport_name"),
-        "dockList": row.get("dockList"),
+        # 保持旧版 orderDetailList 的固定展示字段契约。
+        "dockList": None,
         "parentDeviceGuid": parent_guid,
         "parentDeviceName": row.get("parentDeviceName") or row.get("basic_line_ledger_name") or row.get("line_name") or row.get("lineName") or row.get("线路名称"),
         "deviceType": row.get("deviceType") or major,
@@ -649,12 +650,12 @@ def _row_to_detail(row: dict[str, Any]) -> dict[str, Any] | None:
         "altitude": row.get("altitude"),
         "voltageLevel": row.get("voltageLevel") or row.get("voltage_level"),
         "voltageLevelZh": row.get("voltageLevelZh") or row.get("voltage_level_zh"),
-        "promptInformation": row.get("promptInformation"),
-        "disabled": bool(row.get("disabled", False)),
+        "promptInformation": None,
+        "disabled": False,
         "sort": row.get("sort") or row.get("towerSort") or row.get("tower_sort"),
-        "terrain": bool(row.get("terrain", False)),
+        "terrain": False,
         "lineGuid": row.get("lineGuid") or parent_guid,
-        "workNature": row.get("workNature") or row.get("work_nature") or _work_nature(str(major)),
+        "workNature": row.get("workNature") or row.get("work_nature"),
         "major": major,
     }
 
