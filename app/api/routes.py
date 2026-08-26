@@ -182,6 +182,11 @@ async def send_session_message(
         message=content,
         metadata=request.metadata if request is not None else {},
     )
+    _attach_event_ids(
+        event,
+        request_id=request.request_id if request is not None else None,
+        client_message_id=request.message_id if request is not None else None,
+    )
     state = await session_service.get_state(session_id)
     return InteractionResponse(event=_public_event(event), state=state)
 
@@ -248,10 +253,11 @@ async def legacy_chat(
         raise HTTPException(status_code=422, detail="unsupported event type")
 
     event["session_id"] = request.session_id
-    if request.request_id is not None:
-        event["request_id"] = request.request_id
-    if request.message_id is not None:
-        event["parent_message_id"] = request.message_id
+    _attach_event_ids(
+        event,
+        request_id=request.request_id,
+        client_message_id=request.message_id,
+    )
     state = await session_service.get_state(request.session_id)
     return InteractionResponse(event=_public_event(event), state=state)
 
@@ -265,6 +271,7 @@ async def resume_session(
 ) -> InteractionResponse:
     await _ensure_session(registry, session_id)
     event = await session_service.resume_event(session_id, request)
+    _attach_event_ids(event)
     state = await session_service.get_state(session_id)
     return InteractionResponse(event=_public_event(event), state=state)
 
@@ -273,3 +280,16 @@ def _public_event(event: dict[str, Any]) -> dict[str, Any]:
     if event.get("type") == "dst_state":
         return {}
     return event
+
+
+def _attach_event_ids(
+    event: dict[str, Any],
+    *,
+    request_id: str | None = None,
+    client_message_id: str | None = None,
+) -> None:
+    """按旧版消息树语义补齐一次请求的服务端事件 ID。"""
+
+    event["request_id"] = request_id or str(uuid4())
+    event["message_id"] = str(event.get("message_id") or uuid4())
+    event["parent_message_id"] = client_message_id or str(uuid4())

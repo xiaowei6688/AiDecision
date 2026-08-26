@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.actions.schemas import ActionResult
 from app.core.runtime_context import get_runtime_context
 from app.integrations.inspection.bindings import inspection_session_bindings
+from app.integrations.inspection.models import PLAN_TYPES
 
 
 def inspection_action_result_projection(result: ActionResult) -> dict[str, object]:
@@ -21,7 +23,7 @@ def inspection_action_result_projection(result: ActionResult) -> dict[str, objec
         action_code = "createPlan"
         route_path = "/plan/review"
         execute_api = "/plan/create"
-        question = "请确认是否创建以下巡检计划"
+        question = _plan_confirmation_question(params)
     elif action_id == "inspection.create_work_order":
         action_code = "createTempOrder"
         route_path = "/workOrder/review"
@@ -64,13 +66,29 @@ def inspection_human_interrupt_projection(interrupts: list[object]) -> dict[str,
     payload = first.get("payload")
     if not isinstance(payload, dict) or payload.get("businessId") != "inspection":
         return {}
-    flattened = {**first, **payload}
-    return {
-        "content": first.get("question"),
-        "data": {
-            **payload,
-            "interrupts": [flattened],
+    legacy_interrupt = {
+        "status": first.get("status") or "pending",
+        "question": payload.get("question") or first.get("question"),
+        "allowed_actions": ["approve", "cancel"],
+        "payload": {
+            "reason": "业务参数已补全，需要用户最终确认后提交",
+            "needConfirm": True,
+            "displayFields": {},
         },
+        "actionCode": payload.get("actionCode"),
+        "routePath": payload.get("routePath"),
+        "executeApi": payload.get("executeApi"),
+        "executeMethod": payload.get("executeMethod") or "POST",
+        "executePayload": payload.get("executePayload") or {},
+    }
+    projected_data: dict[str, object] = {"interrupts": [legacy_interrupt]}
+    pre_message = payload.get("pre_message")
+    if isinstance(pre_message, str) and pre_message.strip():
+        # 通用流式层会先发送该总结，再从最终确认事件中移除本字段。
+        projected_data["pre_message"] = pre_message.strip()
+    return {
+        "content": None,
+        "data": projected_data,
     }
 
 
@@ -253,6 +271,53 @@ def _display_fields(action_id: str, params: dict[str, Any]) -> dict[str, Any]:
         "startDate": params.get("start_date", params.get("startDate")),
         "endDate": params.get("end_date", params.get("endDate")),
     }
+
+
+def _plan_confirmation_question(params: dict[str, Any]) -> str:
+    plan_name = str(params.get("planName") or params.get("plan_name") or "").strip()
+    plan_type_code = str(params.get("planType") or params.get("plan_type") or "").strip()
+    plan_type = PLAN_TYPES.get(plan_type_code, plan_type_code)
+    start_time = str(
+        params.get("inspectStartTime") or params.get("inspect_start_time") or ""
+    ).strip()
+    inspect_date = start_time.split(" ", 1)[0]
+    objects = params.get("planObjectList") or params.get("plan_object_list") or []
+    objects = objects if isinstance(objects, list) else []
+    line_name = next((
+        str(item.get("parentDeviceName") or item.get("parent_device_name") or "").strip()
+        for item in objects
+        if isinstance(item, dict)
+        and (item.get("parentDeviceName") or item.get("parent_device_name"))
+    ), "")
+    tower_numbers = [
+        number
+        for item in objects
+        if isinstance(item, dict)
+        for number in [_tower_number(item.get("deviceName") or item.get("device_name"))]
+        if number is not None
+    ]
+    if tower_numbers and len(tower_numbers) == len(objects):
+        first_number = min(tower_numbers)
+        last_number = max(tower_numbers)
+        tower_summary = (
+            f"{first_number}基杆塔"
+            if first_number == last_number
+            else f"{first_number}-{last_number}基杆塔"
+        )
+    else:
+        tower_summary = f"共{len(objects)}基杆塔"
+    return (
+        "请确认是否创建以下巡检计划：\n"
+        f"- 计划名称：{plan_name}\n"
+        f"- 计划类型：{plan_type}\n"
+        f"- 巡检时间：{inspect_date}\n"
+        f"- 巡检对象为 {line_name} 的 {tower_summary}"
+    )
+
+
+def _tower_number(value: Any) -> int | None:
+    matched = re.search(r"#\s*(\d+)", str(value or ""))
+    return int(matched.group(1)) if matched else None
 
 
 _LEGACY_FIELD_NAMES = {

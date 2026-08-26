@@ -32,6 +32,8 @@ class ChatRequest(BaseModel):
     """通过REST或WebSocket发送的用户消息流."""
 
     message: str = Field(min_length=1)
+    request_id: str | None = None
+    message_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

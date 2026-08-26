@@ -654,12 +654,16 @@ def test_normalize_event_converts_confirmation_tool_result_to_human_action_requi
 
     assert normalized["type"] == "human_action_required"
     assert normalized["session_id"] == "session-1"
-    assert normalized["content"] == "请确认是否创建以下巡检工单"
-    assert normalized["data"]["businessId"] == "inspection"
-    assert normalized["data"]["actionCode"] == "createTempOrder"
-    assert normalized["data"]["executeApi"] == "/order/createTempOrder"
-    assert normalized["data"]["executePayload"] == {"planGuid": "plan-1"}
-    assert normalized["data"]["confirmation_token"] == "token-1"
+    assert normalized["content"] is None
+    assert set(normalized["data"]) == {"interrupts"}
+    action = normalized["data"]["interrupts"][0]
+    assert action["status"] == "pending"
+    assert action["question"] == "请确认是否创建以下巡检工单"
+    assert action["allowed_actions"] == ["approve", "cancel"]
+    assert action["actionCode"] == "createTempOrder"
+    assert action["executeApi"] == "/order/createTempOrder"
+    assert action["executePayload"] == {"planGuid": "plan-1"}
+    assert action["payload"]["needConfirm"] is True
 
 
 def test_stream_events_emit_pre_message_before_human_confirmation() -> None:
@@ -667,10 +671,14 @@ def test_stream_events_emit_pre_message_before_human_confirmation() -> None:
     service._normalize_event = lambda _session_id, _event: {  # type: ignore[method-assign]
         "type": "human_action_required",
         "session_id": "session-1",
-        "content": "是否执行一键起飞？",
+        "content": None,
         "data": {
             "pre_message": "已成功创建全部巡检工单。",
-            "actionCode": "flyWorkOrder",
+            "interrupts": [{
+                "status": "pending",
+                "question": "是否执行一键起飞？",
+                "actionCode": "flyWorkOrder",
+            }],
         },
     }
 
@@ -681,8 +689,9 @@ def test_stream_events_emit_pre_message_before_human_confirmation() -> None:
         "human_action_required",
     ]
     assert events[0]["content"] == "已成功创建全部巡检工单。"
-    assert events[1]["content"] == "是否执行一键起飞？"
-    assert "pre_message" not in events[1]["data"]
+    assert events[1]["content"] is None
+    assert set(events[1]["data"]) == {"interrupts"}
+    assert events[1]["data"]["interrupts"][0]["actionCode"] == "flyWorkOrder"
 
 
 def test_direct_action_failure_is_forwarded_without_internal_marker() -> None:

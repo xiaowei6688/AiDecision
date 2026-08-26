@@ -64,6 +64,8 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
         WebSocketServerEvent(
             type=ServerEventType.ACK,
             session_id=session_id,
+            request_id=str(uuid4()),
+            message_id=str(uuid4()),
             content="connected",
             data={"created": created},
         ),
@@ -85,6 +87,9 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
                 await _send_error(websocket, event_session_id, "session_not_found", str(exc))
                 continue
             push_manager.bind_session(connection, event_session_id)
+            response_request_id = client_event.request_id or str(uuid4())
+            client_message_id = client_event.message_id or str(uuid4())
+            assistant_message_id = str(uuid4())
 
             if client_event.type == ClientEventType.PING:
                 await _send(
@@ -92,7 +97,9 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
                     WebSocketServerEvent(
                         type=ServerEventType.PONG,
                         session_id=event_session_id,
-                        request_id=client_event.request_id,
+                        request_id=response_request_id,
+                        message_id=assistant_message_id,
+                        parent_message_id=client_message_id,
                     ),
                 )
                 continue
@@ -113,13 +120,15 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
                         message=_business_continuation_message(continuation),
                         metadata={"business_continuation": continuation},
                     ):
-                        continuation_event["request_id"] = client_event.request_id
-                        continuation_event["parent_message_id"] = client_event.message_id
+                        continuation_event["request_id"] = response_request_id
+                        continuation_event["message_id"] = assistant_message_id
+                        continuation_event["parent_message_id"] = client_message_id
                         continuation_event["session_id"] = event_session_id
                         await _send_event(websocket, continuation_event)
                 else:
-                    event["request_id"] = client_event.request_id
-                    event["parent_message_id"] = client_event.message_id
+                    event["request_id"] = response_request_id
+                    event["message_id"] = assistant_message_id
+                    event["parent_message_id"] = client_message_id
                     event["session_id"] = event_session_id
                     await _send_event(websocket, event)
                 continue
@@ -144,8 +153,9 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
 
                     events = single_resume_event()
                 async for event in events:
-                    event["request_id"] = client_event.request_id
-                    event["parent_message_id"] = client_event.message_id
+                    event["request_id"] = response_request_id
+                    event["message_id"] = assistant_message_id
+                    event["parent_message_id"] = client_message_id
                     event["session_id"] = event_session_id
                     await _send_event(websocket, event)
                 continue
@@ -160,8 +170,9 @@ async def _chat_websocket(websocket: WebSocket, session_id: str, created: bool) 
                 metadata=client_event.metadata,
             ):
                 event["session_id"] = event_session_id
-                event["request_id"] = client_event.request_id
-                event["parent_message_id"] = client_event.message_id
+                event["request_id"] = response_request_id
+                event["message_id"] = assistant_message_id
+                event["parent_message_id"] = client_message_id
                 await _send_event(websocket, event)
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected: session_id=%s", session_id)
@@ -183,6 +194,11 @@ async def _send(websocket: WebSocket, event: WebSocketServerEvent) -> None:
 async def _send_event(websocket: WebSocket, event: dict[str, object]) -> None:
     if event.get("type") == ServerEventType.DST_STATE.value:
         return
+    if not event.get("request_id"):
+        event["request_id"] = str(uuid4())
+    if not event.get("message_id"):
+        event["message_id"] = str(uuid4())
+    event.setdefault("parent_message_id", None)
     await websocket.app.state.websocket_push_manager.send_raw(websocket, event)
 
 
@@ -197,6 +213,8 @@ async def _send_error(
         WebSocketServerEvent(
             type=ServerEventType.ERROR,
             session_id=session_id,
+            request_id=str(uuid4()),
+            message_id=str(uuid4()),
             content=message,
             data={"code": code},
         ),

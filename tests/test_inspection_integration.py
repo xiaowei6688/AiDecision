@@ -591,17 +591,64 @@ def test_inspection_create_plan_projection_uses_legacy_plan_object_shape() -> No
     assert projected["confirmation_token"] == "token-1"
 
 
+def test_inspection_create_plan_projection_builds_legacy_confirmation_question() -> None:
+    result = ActionResult(
+        status="requires_confirmation",
+        action_id="inspection.create_plan",
+        message="confirm",
+        data={
+            "action": {"title": "创建巡检计划"},
+            "params": {
+                "planType": "5",
+                "planName": "临时计划-2026-09-02-10kV白路线巡检-1787727710",
+                "inspectStartTime": "2026-09-02 00:00:00",
+                "inspectEndTime": "2026-09-02 23:59:59",
+                "planObjectList": [
+                    {
+                        "deviceGuid": "tower-1",
+                        "deviceName": "10kV白路线#1",
+                        "major": "dms",
+                        "parentDeviceGuid": "line-1",
+                        "parentDeviceName": "10kV白路线",
+                    },
+                    {
+                        "deviceGuid": "tower-90",
+                        "deviceName": "10kV白路线#90",
+                        "major": "dms",
+                        "parentDeviceGuid": "line-1",
+                        "parentDeviceName": "10kV白路线",
+                    },
+                ],
+            },
+        },
+    )
+
+    projected = inspection_action_result_projection(result)
+
+    assert projected["question"] == (
+        "请确认是否创建以下巡检计划：\n"
+        "- 计划名称：临时计划-2026-09-02-10kV白路线巡检-1787727710\n"
+        "- 计划类型：临时计划\n"
+        "- 巡检时间：2026-09-02\n"
+        "- 巡检对象为 10kV白路线 的 1-90基杆塔"
+    )
+
+
 def test_inspection_human_interrupt_projection_flattens_legacy_payload() -> None:
     interrupt = {
-        "question": "请确认是否创建以下巡检工单",
+        "status": "pending",
+        "question": "请确认是否创建以下巡检计划",
         "allowed_actions": ["approve", "reject", "edit"],
         "recommended_action": "approve",
         "ui_type": "confirmation",
         "payload": {
             "businessId": "inspection",
-            "actionCode": "createTempOrder",
-            "executeApi": "/order/createTempOrder",
-            "executePayload": {"planGuid": "plan-1"},
+            "question": "请确认是否创建以下巡检计划：\n- 计划名称：临时计划",
+            "actionCode": "createPlan",
+            "routePath": "/plan/review",
+            "executeApi": "/plan/create",
+            "executeMethod": "POST",
+            "executePayload": {"planName": "临时计划"},
             "confirmation_token": "token-1",
         },
     }
@@ -610,11 +657,45 @@ def test_inspection_human_interrupt_projection_flattens_legacy_payload() -> None
     projections.register_human_interrupt(inspection_human_interrupt_projection)
     projected = projections.project_human_interrupt([interrupt])
 
-    assert projected["content"] == "请确认是否创建以下巡检工单"
-    assert projected["data"]["businessId"] == "inspection"
-    assert projected["data"]["actionCode"] == "createTempOrder"
-    assert projected["data"]["executeApi"] == "/order/createTempOrder"
-    assert projected["data"]["interrupts"][0]["confirmation_token"] == "token-1"
+    assert projected["content"] is None
+    assert set(projected["data"]) == {"interrupts"}
+    action = projected["data"]["interrupts"][0]
+    assert action == {
+        "status": "pending",
+        "question": "请确认是否创建以下巡检计划：\n- 计划名称：临时计划",
+        "allowed_actions": ["approve", "cancel"],
+        "payload": {
+            "reason": "业务参数已补全，需要用户最终确认后提交",
+            "needConfirm": True,
+            "displayFields": {},
+        },
+        "actionCode": "createPlan",
+        "routePath": "/plan/review",
+        "executeApi": "/plan/create",
+        "executeMethod": "POST",
+        "executePayload": {"planName": "临时计划"},
+    }
+
+
+def test_inspection_fly_confirmation_preserves_summary_for_pre_message() -> None:
+    projected = inspection_human_interrupt_projection([{
+        "status": "pending",
+        "question": "是否对固定机场巡检工单执行一键起飞？",
+        "payload": {
+            "businessId": "inspection",
+            "actionCode": "flyWorkOrder",
+            "routePath": "/workOrder/review",
+            "executeApi": "/order/fly",
+            "executeMethod": "POST",
+            "executePayload": {"ids": ["order-1"]},
+            "pre_message": "已成功创建全部巡检工单。",
+        },
+    }])
+
+    assert projected["data"]["pre_message"] == "已成功创建全部巡检工单。"
+    action = projected["data"]["interrupts"][0]
+    assert action["actionCode"] == "flyWorkOrder"
+    assert "pre_message" not in action
 
 
 def test_inspection_plan_frontend_callback_finishes_plan_flow_only() -> None:

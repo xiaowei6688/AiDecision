@@ -210,6 +210,34 @@ def test_legacy_chat_endpoint_uses_session_id_from_body() -> None:
     body = response.json()
     assert body["event"]["session_id"] == "legacy-session"
     assert body["event"]["content"] == "echo: 可以"
+    assert body["event"]["request_id"]
+    assert body["event"]["message_id"]
+    assert body["event"]["parent_message_id"]
+    assert body["event"]["parent_message_id"] != body["event"]["message_id"]
+
+
+def test_legacy_chat_endpoint_preserves_request_and_parent_message_ids() -> None:
+    app = create_app(
+        settings=Settings(_env_file=None),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat",
+            json={
+                "type": "message",
+                "content": "可以",
+                "session_id": "legacy-session",
+                "request_id": "request-1",
+                "message_id": "client-message-1",
+            },
+        )
+
+    event = response.json()["event"]
+    assert event["request_id"] == "request-1"
+    assert event["message_id"] not in {None, "", "client-message-1"}
+    assert event["parent_message_id"] == "client-message-1"
 
 
 def test_http_resume_endpoint_returns_event_and_state() -> None:
@@ -256,6 +284,79 @@ def test_chat_websocket_returns_message_without_dst_state() -> None:
 
     assert message["type"] == "message"
     assert message["content"] == "echo: hello"
+    assert message["request_id"]
+    assert message["message_id"]
+    assert message["parent_message_id"]
+    assert message["parent_message_id"] != message["message_id"]
+
+
+def test_chat_websocket_correlates_server_events_with_client_message() -> None:
+    app = create_app(
+        settings=Settings(_env_file=None),
+        session_service=FakeSessionService(),
+    )  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/chat/demo") as websocket:
+            websocket.receive_json()
+            websocket.send_json({
+                "type": "message",
+                "session_id": "demo",
+                "request_id": "request-1",
+                "message_id": "client-message-1",
+                "content": "hello",
+            })
+            message = websocket.receive_json()
+
+    assert message["request_id"] == "request-1"
+    assert message["message_id"] not in {None, "", "client-message-1"}
+    assert message["parent_message_id"] == "client-message-1"
+
+
+def test_chat_websocket_reuses_assistant_message_id_for_one_request_stream() -> None:
+    class StreamingSessionService(FakeSessionService):
+        async def stream_message(
+            self,
+            session_id: str,
+            message: str,
+            metadata: dict[str, Any] | None = None,
+        ) -> AsyncIterator[dict[str, Any]]:
+            yield {
+                "type": "thinking_step",
+                "session_id": session_id,
+                "content": "正在核对数据",
+                "data": {"status": "running"},
+            }
+            yield {
+                "type": "human_action_required",
+                "session_id": session_id,
+                "content": None,
+                "data": {"interrupts": []},
+            }
+
+    app = create_app(
+        settings=Settings(_env_file=None),
+        session_service=StreamingSessionService(),
+    )  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/chat/demo") as websocket:
+            websocket.receive_json()
+            websocket.send_json({
+                "type": "message",
+                "session_id": "demo",
+                "request_id": "request-1",
+                "message_id": "client-message-1",
+                "content": "创建计划",
+            })
+            thinking = websocket.receive_json()
+            confirmation = websocket.receive_json()
+
+    assert thinking["request_id"] == confirmation["request_id"] == "request-1"
+    assert thinking["message_id"] == confirmation["message_id"]
+    assert thinking["message_id"] != "client-message-1"
+    assert thinking["parent_message_id"] == "client-message-1"
+    assert confirmation["parent_message_id"] == "client-message-1"
 
 
 def test_chat_websocket_rejects_event_without_session_id() -> None:
@@ -372,6 +473,7 @@ def test_chat_websocket_runs_plugin_continuation_after_action_result() -> None:
     continuation = event["data"]["metadata"]["business_continuation"]
     assert event["type"] == "message"
     assert event["request_id"] == "request-1"
+    assert event["message_id"]
     assert event["parent_message_id"] == "message-1"
     assert continuation == {
         "businessId": "inspection",
