@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import asdict, dataclass
 from time import perf_counter
 from typing import Any
@@ -64,6 +66,7 @@ class ToolBroker:
         runtime = get_runtime_context()
         description = self._registry.step(request.tool_name)
         request_id = str(uuid4())
+        display_step_id = _display_step_id(request)
         started = perf_counter()
         progress = get_progress_channel()
         if progress is not None and description.emit_on_start:
@@ -71,7 +74,7 @@ class ToolBroker:
                 session_id=runtime.session_id,
                 source="tool_broker",
                 business_id=request.business_id,
-                step_id=request_id,
+                step_id=display_step_id,
                 title=description.title,
                 summary=description.summary,
                 status="running",
@@ -121,7 +124,7 @@ class ToolBroker:
                 session_id=runtime.session_id,
                 source="tool_broker",
                 business_id=request.business_id,
-                step_id=request_id,
+                step_id=display_step_id,
                 title=description.title,
                 summary=description.summary,
                 status="completed" if status == "success" else "failed",
@@ -137,3 +140,19 @@ class ToolBroker:
             audit=audit,
             direct_result=direct_result,
         )
+
+
+def _display_step_id(request: ToolBrokerRequest) -> str:
+    raw = json.dumps(
+        {
+            "business_id": request.business_id,
+            "tool_name": request.tool_name,
+            "arguments": request.arguments,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+    return f"tool_broker.{request.business_id}.{request.tool_name}.{digest}"

@@ -94,6 +94,56 @@ async def test_tool_broker_projects_completed_result_for_direct_forwarding() -> 
 
 
 @pytest.mark.asyncio
+async def test_tool_broker_uses_stable_display_step_id_for_same_arguments() -> None:
+    context = PluginContext()
+
+    from langchain_core.tools import tool
+
+    @tool
+    def query_stock(product: str) -> dict[str, object]:
+        """查询库存。"""
+
+        return {"product": product, "quantity": 3}
+
+    context.tools.register(query_stock, read_only=True)
+    context.tools.register_step("query_stock", "核对库存", "正在核对库存")
+    progress_channel = ProgressChannel()
+    runtime_token = set_runtime_context(RequestRuntimeContext(
+        session_id="session-1",
+        plugin_context=context,
+    ))
+    progress_token = set_progress_channel(progress_channel)
+    try:
+        for _ in range(2):
+            await context.tool_broker.execute(
+                ToolBrokerRequest(
+                    business_id="inventory",
+                    tool_name="query_stock",
+                    arguments={"product": "绝缘子"},
+                ),
+                ("query_stock",),
+            )
+    finally:
+        reset_progress_channel(progress_token)
+        reset_runtime_context(runtime_token)
+
+    events = []
+    while True:
+        event = progress_channel.receive_nowait()
+        if event is None:
+            break
+        events.append(event)
+
+    assert [event.status for event in events] == [
+        "running",
+        "completed",
+        "running",
+        "completed",
+    ]
+    assert len({event.step_id for event in events}) == 1
+
+
+@pytest.mark.asyncio
 async def test_tool_broker_uses_framework_direct_action_without_plugin_projector() -> None:
     context = PluginContext()
 
@@ -217,7 +267,8 @@ async def test_tool_broker_emits_live_running_and_completed_progress() -> None:
 
     assert running.status == "running"
     assert completed.status == "completed"
-    assert completed.step_id == running.step_id == result.audit.request_id
+    assert completed.step_id == running.step_id
+    assert result.audit.request_id
     assert completed.data["durationMs"] >= 0
     assert "arguments" not in completed.data
     assert "evidence" not in completed.data

@@ -212,6 +212,72 @@ async def test_business_agent_can_call_authorized_readonly_tool() -> None:
 
 
 @pytest.mark.asyncio
+async def test_business_agent_reuses_duplicate_readonly_tool_result() -> None:
+    calls: list[str] = []
+
+    @tool
+    def query_stock(product: str) -> dict[str, object]:
+        """查询库存。"""
+
+        calls.append(product)
+        return {"product": product, "quantity": 3}
+
+    class DuplicateToolCallingModel:
+        def __init__(self) -> None:
+            self._responses = [
+                AIMessage(
+                    content="",
+                    tool_calls=[{
+                        "name": "query_stock",
+                        "args": {"product": "绝缘子"},
+                        "id": "call-1",
+                    }],
+                ),
+                AIMessage(
+                    content="",
+                    tool_calls=[{
+                        "name": "query_stock",
+                        "args": {"product": "绝缘子"},
+                        "id": "call-2",
+                    }],
+                ),
+                AIMessage(content='{"facts_and_constraints":["库存为3"]}'),
+            ]
+
+        def bind_tools(self, tools: list[object]) -> "DuplicateToolCallingModel":
+            return self
+
+        async def ainvoke(self, messages: object) -> AIMessage:
+            return self._responses.pop(0)
+
+    manifest = BusinessAgentManifest(
+        business_id="inventory",
+        title="库存",
+        description="测试 Agent",
+        system_prompt="",
+        datasources=("inventory",),
+        action_prefixes=("inventory.",),
+        readonly_tool_names=("query_stock",),
+    )
+    runtime = build_business_agent_runtime(manifest, DuplicateToolCallingModel())
+    context = PluginContext()
+    context.tools.register(query_stock, read_only=True)
+
+    result = await runtime.invoke(BusinessAgentInvocation(
+        manifest=manifest,
+        task="查询绝缘子库存",
+        context={},
+        available_actions=[],
+        available_tools=(query_stock,),
+        tool_broker=context.tool_broker,
+    ))
+
+    assert calls == ["绝缘子"]
+    assert len(result.tool_audit) == 1
+    assert result.advice.facts_and_constraints == ["库存为3"]
+
+
+@pytest.mark.asyncio
 async def test_business_agent_stops_after_framework_direct_action() -> None:
     @tool
     def build_record() -> dict[str, object]:

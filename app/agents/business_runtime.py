@@ -80,6 +80,7 @@ class LocalLLMBusinessAgent:
             else self._model
         )
         audit: list[ToolAuditRecord] = []
+        tool_result_cache: dict[tuple[str, str], Any] = {}
         for _ in range(6):
             response = await model.ainvoke(messages)
             messages.append(response)
@@ -97,23 +98,31 @@ class LocalLLMBusinessAgent:
                     raise ValueError(f"Business Agent requested unauthorized tool: {name}")
                 if invocation.tool_broker is None:
                     raise RuntimeError("Business Agent read-only tools require ToolBroker")
-                broker_result = await invocation.tool_broker.execute(
-                    ToolBrokerRequest(
-                        business_id=manifest.business_id,
-                        tool_name=name,
-                        arguments=call.get("args") or {},
-                    ),
-                    manifest.readonly_tool_names,
-                )
-                audit.append(broker_result.audit)
-                if invocation.allow_direct_results and broker_result.direct_result is not None:
-                    return BusinessAgentRunResult(
-                        tool_audit=tuple(audit),
-                        direct_result=broker_result.direct_result,
+                arguments = call.get("args") or {}
+                cache_key = (str(name), _canonical_args(arguments))
+                if cache_key in tool_result_cache:
+                    cached_result = tool_result_cache[cache_key]
+                else:
+                    broker_result = await invocation.tool_broker.execute(
+                        ToolBrokerRequest(
+                            business_id=manifest.business_id,
+                            tool_name=name,
+                            arguments=arguments,
+                        ),
+                        manifest.readonly_tool_names,
                     )
+                    audit.append(broker_result.audit)
+                    cached_result = broker_result.result
+                    if broker_result.audit.status == "success":
+                        tool_result_cache[cache_key] = cached_result
+                    if invocation.allow_direct_results and broker_result.direct_result is not None:
+                        return BusinessAgentRunResult(
+                            tool_audit=tuple(audit),
+                            direct_result=broker_result.direct_result,
+                        )
                 messages.append(ToolMessage(
                     content=json.dumps(
-                        broker_result.result,
+                        cached_result,
                         ensure_ascii=False,
                         default=str,
                     ),
@@ -146,3 +155,18 @@ def _message_content_to_text(content: Any) -> str:
                 parts.append(item["text"])
         return "\n".join(parts)
     return str(content)
+
+
+def _canonical_args(args: Any) -> str:
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except json.JSONDecodeError:
+            return args.strip()
+    return json.dumps(
+        args or {},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
