@@ -618,12 +618,22 @@ def inspection_build_work_order_fill_state(
         "pendingWorkOrderGroups": pending_groups,
         "remainingWorkOrderGroups": [name for name in pending_groups if name != selected_group],
     }
-    return {"ok": ready, "workOrderFillState": state}
+    # `ok` describes successful tool execution.  Whether the payload is ready
+    # remains in the business state so callers can continue resource lookup.
+    return {"ok": True, "workOrderFillState": state}
 
 
 def _row_to_detail(row: dict[str, Any]) -> dict[str, Any] | None:
-    device_guid = row.get("deviceGuid") or row.get("tower_guid") or row.get("tower_uid") or row.get("towerGuid") or row.get("杆塔uid")
-    parent_guid = row.get("parentDeviceGuid") or row.get("line_guid") or row.get("line_uid") or row.get("lineGuid") or row.get("线路uid")
+    device_guid = _first_present(
+        row,
+        "deviceGuid", "device_guid", "tower_guid", "tower_uid", "towerGuid",
+        "杆塔guid", "杆塔GUID", "杆塔uid",
+    )
+    parent_guid = _first_present(
+        row,
+        "parentDeviceGuid", "parent_device_guid", "line_guid", "line_uid", "lineGuid",
+        "线路guid", "线路GUID", "线路uid",
+    )
     if not device_guid or not parent_guid:
         return None
     major = row.get("major") or row.get("专业") or "tms"
@@ -645,8 +655,8 @@ def _row_to_detail(row: dict[str, Any]) -> dict[str, Any] | None:
         "fileGuid": row.get("fileGuid") or row.get("file_guid"),
         "fileType": row.get("fileType") or row.get("file_type"),
         "deviceRouteList": row.get("deviceRouteList") or row.get("device_route_list") or [],
-        "longitude": row.get("longitude") or row.get("lng"),
-        "latitude": row.get("latitude") or row.get("lat"),
+        "longitude": row.get("longitude") or row.get("lng") or row.get("经度"),
+        "latitude": row.get("latitude") or row.get("lat") or row.get("纬度"),
         "altitude": row.get("altitude"),
         "voltageLevel": row.get("voltageLevel") or row.get("voltage_level"),
         "voltageLevelZh": row.get("voltageLevelZh") or row.get("voltage_level_zh"),

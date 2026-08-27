@@ -152,6 +152,39 @@ def test_inspection_registers_user_friendly_tool_steps() -> None:
 
 
 @pytest.mark.asyncio
+async def test_inspection_work_order_missing_resources_is_successful_broker_result() -> None:
+    from app.integrations.context import PluginContext
+    from app.integrations.inspection.registration import register_inspection_tools
+    from app.tools.broker import ToolBrokerRequest
+
+    context = PluginContext()
+    register_inspection_tools(context)
+    result = await context.tool_broker.execute(
+        ToolBrokerRequest(
+            business_id="inspection",
+            tool_name="inspection_build_work_order_fill_state",
+            arguments={
+                "plan": {
+                    "planGuid": "plan-1",
+                    "planType": "5",
+                    "inspectStartTime": "2026-08-27 00:00:00",
+                    "inspectEndTime": "2026-08-27 23:59:59",
+                },
+                "coverage_rows": [{
+                    "deviceGuid": "tower-1",
+                    "parentDeviceGuid": "line-1",
+                }],
+            },
+        ),
+        ("inspection_build_work_order_fill_state",),
+    )
+
+    assert result.audit.status == "success"
+    assert result.result["workOrderFillState"]["status"] == "NEED_MORE_INFO"
+    assert result.direct_result is None
+
+
+@pytest.mark.asyncio
 async def test_inspection_work_order_continuation_uses_real_records_for_final_summary() -> None:
     plan = {
         "planGuid": "plan-1",
@@ -232,6 +265,104 @@ async def test_inspection_work_order_continuation_uses_real_records_for_final_su
     assert "AL-20260818-002" in direct.model_dump()["params"]["finalSummary"]
     assert calls == [
         "inspection_query_work_order_detail",
+        "inspection_query_coverage",
+        "inspection_build_work_order_fill_state",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_inspection_work_order_continuation_fills_uncovered_resources() -> None:
+    plan = {
+        "planGuid": "plan-1",
+        "planName": "临时计划-白路线巡检",
+        "planType": "5",
+        "inspectStartTime": "2026-08-27 00:00:00",
+        "inspectEndTime": "2026-08-27 23:59:59",
+    }
+    rows = [{
+        "deviceGuid": "tower-1",
+        "deviceName": "10kV白路线#1",
+        "parentDeviceGuid": "line-1",
+        "parentDeviceName": "10kV白路线",
+        "major": "dms",
+    }]
+    calls: list[str] = []
+
+    class Broker:
+        async def execute(self, request, _allowed):
+            calls.append(request.tool_name)
+            if request.tool_name == "inspection_query_plan_detail":
+                result = {"ok": True, "plan": plan}
+            elif request.tool_name == "inspection_query_coverage":
+                result = {"ok": True, "rows": rows}
+            elif request.tool_name == "inspection_query_work_order_resources":
+                result = {
+                    "ok": True,
+                    "suggestedEquipSn": "drone-1",
+                    "suggestedFlightWorkers": ["worker-1"],
+                }
+            elif request.tool_name == "inspection_build_work_order_fill_state":
+                result = inspection_build_work_order_fill_state.invoke(request.arguments)
+            else:
+                raise AssertionError(f"unexpected tool: {request.tool_name}")
+            return SimpleNamespace(result=result, audit=SimpleNamespace(status="success"))
+
+    direct = await inspection_continuation(
+        {
+            "businessId": "inspection",
+            "operation": "create_work_orders_from_plan",
+            "planId": "plan-id-1",
+        },
+        SimpleNamespace(tool_broker=Broker()),
+    )
+
+    assert direct is not None
+    assert direct.model_dump()["action_id"] == "inspection.create_work_order"
+    assert direct.model_dump()["params"]["equipSn"] == "drone-1"
+    assert direct.model_dump()["params"]["flightWorkers"] == ["worker-1"]
+    assert calls == [
+        "inspection_query_plan_detail",
+        "inspection_query_coverage",
+        "inspection_build_work_order_fill_state",
+        "inspection_query_work_order_resources",
+        "inspection_build_work_order_fill_state",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_inspection_work_order_continuation_does_not_query_resources_for_plan_fields() -> None:
+    calls: list[str] = []
+
+    class Broker:
+        async def execute(self, request, _allowed):
+            calls.append(request.tool_name)
+            if request.tool_name == "inspection_query_plan_detail":
+                result = {"ok": True, "plan": {"planGuid": "plan-1", "planType": "5"}}
+            elif request.tool_name == "inspection_query_coverage":
+                result = {
+                    "ok": True,
+                    "rows": [{"deviceGuid": "tower-1", "parentDeviceGuid": "line-1"}],
+                }
+            elif request.tool_name == "inspection_build_work_order_fill_state":
+                result = inspection_build_work_order_fill_state.invoke(request.arguments)
+            else:
+                raise AssertionError(f"unexpected tool: {request.tool_name}")
+            return SimpleNamespace(result=result, audit=SimpleNamespace(status="success"))
+
+    direct = await inspection_continuation(
+        {
+            "businessId": "inspection",
+            "operation": "create_work_orders_from_plan",
+            "planId": "plan-id-1",
+        },
+        SimpleNamespace(tool_broker=Broker()),
+    )
+
+    assert direct is not None
+    assert direct.model_dump()["kind"] == "message"
+    assert direct.model_dump()["status"] == "failed"
+    assert calls == [
+        "inspection_query_plan_detail",
         "inspection_query_coverage",
         "inspection_build_work_order_fill_state",
     ]
@@ -1114,6 +1245,67 @@ def test_inspection_plan_coverage_rebuilds_legacy_tower_route_airport_chain(
     assert "createUser" not in result["coveredRows"][0]
     assert result["uncoveredRows"][0]["deviceGuid"] == "tower-2"
     assert len(questions) == 3
+
+
+def test_inspection_plan_coverage_normalizes_chinese_guid_columns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def query(self, datasource: str, question: str) -> dict[str, object]:
+            assert datasource == "inspection_mysql"
+            if "计划 plan_guid" in question:
+                rows = [{
+                    "杆塔guid": "tower-1",
+                    "杆塔名称": "1号杆塔",
+                    "线路guid": "line-1",
+                    "线路名称": "10kV白路线",
+                    "专业": "dms",
+                    "经度": 120.001,
+                    "纬度": 30.001,
+                }]
+            elif "所有航迹信息" in question:
+                rows = []
+            else:
+                rows = [{
+                    "机场guid": "dock-1",
+                    "机场名称": "机场1",
+                    "经度": 120.0,
+                    "纬度": 30.0,
+                    "巡检半径": 3000,
+                }]
+            return {"status": "success", "data": {"rows": rows}}
+
+    monkeypatch.setattr(
+        "app.integrations.inspection.workflows.get_inspection_settings",
+        lambda: InspectionSettings(
+            _env_file=None,
+            text_to_sql_datasource="inspection_mysql",
+        ),
+    )
+    monkeypatch.setattr("app.integrations.inspection.workflows.TextToSqlClient", FakeClient)
+
+    coverage = inspection_query_coverage.invoke({"plan_guid": "plan-guid-1"})
+    fill = inspection_build_work_order_fill_state.invoke({
+        "plan": {
+            "planGuid": "plan-guid-1",
+            "planType": "5",
+            "inspectStartTime": "2026-08-27 00:00:00",
+            "inspectEndTime": "2026-08-27 23:59:59",
+        },
+        "coverage_rows": coverage["rows"],
+    })
+
+    assert coverage["coveredCount"] == 1
+    assert coverage["rows"][0]["deviceGuid"] == "tower-1"
+    assert coverage["rows"][0]["parentDeviceGuid"] == "line-1"
+    assert fill["workOrderFillState"]["status"] == "READY"
+    detail = fill["workOrderFillState"]["executePayload"]["orderDetailList"][0]
+    assert detail["deviceGuid"] == "tower-1"
+    assert detail["parentDeviceGuid"] == "line-1"
+    assert detail["dockGuid"] == "dock-1"
 
 
 def test_inspection_verifies_created_work_order_with_integration_datasource(

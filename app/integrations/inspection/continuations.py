@@ -98,7 +98,15 @@ async def inspection_continuation(
         return direct
 
     state = fill.get("workOrderFillState") if isinstance(fill, dict) else None
-    if not isinstance(state, dict) or state.get("currentWorkOrderGroup") != "uncovered":
+    missing_fields = set(state.get("missingFields") or []) if isinstance(state, dict) else set()
+    needs_resources = (
+        isinstance(state, dict)
+        and state.get("status") == "NEED_MORE_INFO"
+        and state.get("currentWorkOrderGroup") == "uncovered"
+        and bool(missing_fields)
+        and missing_fields <= {"equipSn", "flightWorkers"}
+    )
+    if not needs_resources:
         return _failure(_next_question(fill))
 
     resources = await _run_tool(context, "inspection_query_work_order_resources", {})

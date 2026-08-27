@@ -25,8 +25,12 @@ def query_plan_coverage_rows(
     tower_result = client.query(
         datasource=datasource,
         question=(
-            f"查询计划 plan_guid={plan_guid} 下所有杆塔的杆塔guid、杆塔名称、线路guid、线路名称、"
-            "专业、作业性质、经度、纬度、海拔、电压等级、电压等级中文、杆塔性质和杆塔排序号"
+            f"查询计划 plan_guid={plan_guid} 下所有杆塔的 "
+            "device_guid(杆塔guid)、device_name(杆塔名称)、parent_device_guid(线路guid)、"
+            "parent_device_name(线路名称)、major(专业)、work_nature(作业性质)、"
+            "longitude(经度)、latitude(纬度)、altitude(海拔)、"
+            "voltage_level(电压等级)、voltage_level_zh(电压等级中文)、"
+            "pole_nature(杆塔性质)、tower_sort(杆塔排序号)"
         ),
     )
     if tower_result.get("status") != "success":
@@ -36,9 +40,17 @@ def query_plan_coverage_rows(
         return error("empty_plan_towers", f"计划 {plan_guid} 下未查询到杆塔数据")
 
     device_guids = [
-        str(first_present(row, "device_guid", "deviceGuid", "tower_guid", "tower_uid"))
+        str(first_present(
+            row,
+            "device_guid", "deviceGuid", "tower_guid", "tower_uid", "towerGuid",
+            "杆塔guid", "杆塔GUID", "杆塔uid",
+        ))
         for row in towers
-        if first_present(row, "device_guid", "deviceGuid", "tower_guid", "tower_uid")
+        if first_present(
+            row,
+            "device_guid", "deviceGuid", "tower_guid", "tower_uid", "towerGuid",
+            "杆塔guid", "杆塔GUID", "杆塔uid",
+        )
     ]
     route_result = client.query(
         datasource=datasource,
@@ -55,14 +67,21 @@ def query_plan_coverage_rows(
         return route_result
     airport_result = client.query(
         datasource=datasource,
-        question="查询所有机场/机巢的机场guid、机场名称、经度、纬度和巡检半径",
+        question=(
+            "查询所有机场/机巢的 dock_guid、dock_name、longitude(经度)、latitude(纬度)、"
+            "inspection_radius(巡检半径，无则默认3000米)"
+        ),
     )
     if airport_result.get("status") != "success":
         return airport_result
 
     routes_by_device: dict[str, list[dict[str, Any]]] = {}
     for row in rows_from_text2sql_result(route_result):
-        device_guid = first_present(row, "device_guid", "deviceGuid", "tower_guid", "tower_uid")
+        device_guid = first_present(
+            row,
+            "device_guid", "deviceGuid", "tower_guid", "tower_uid", "towerGuid",
+            "杆塔guid", "杆塔GUID", "杆塔uid",
+        )
         if device_guid:
             routes_by_device.setdefault(str(device_guid), []).append(map_route(row))
     airports = rows_from_text2sql_result(airport_result)
@@ -79,16 +98,24 @@ def merge_tower_coverage(
     airports: list[dict[str, Any]],
     index: int,
 ) -> dict[str, Any]:
-    device_guid = first_present(tower, "device_guid", "deviceGuid", "tower_guid", "tower_uid")
+    device_guid = first_present(
+        tower,
+        "device_guid", "deviceGuid", "tower_guid", "tower_uid", "towerGuid",
+        "杆塔guid", "杆塔GUID", "杆塔uid",
+    )
     parent_device_guid = first_present(
         tower,
         "parent_device_guid",
         "parentDeviceGuid",
         "line_guid",
         "line_uid",
+        "lineGuid",
+        "线路guid",
+        "线路GUID",
+        "线路uid",
     )
-    longitude = as_float(first_present(tower, "longitude", "lng"))
-    latitude = as_float(first_present(tower, "latitude", "lat"))
+    longitude = as_float(first_present(tower, "longitude", "lng", "经度"))
+    latitude = as_float(first_present(tower, "latitude", "lat", "纬度"))
     airport = nearest_airport(longitude, latitude, airports)
     routes = [
         {**route, "parentDeviceGuid": route.get("parentDeviceGuid") or parent_device_guid}
@@ -103,11 +130,15 @@ def merge_tower_coverage(
         **tower,
         "deviceGuid": device_guid,
         "deviceName": first_present(
-            tower, "device_name", "deviceName", "basic_tower_ledger_name", "tower_name"
+            tower,
+            "device_name", "deviceName", "basic_tower_ledger_name", "tower_name",
+            "towerName", "杆塔名称",
         ),
         "parentDeviceGuid": parent_device_guid,
         "parentDeviceName": first_present(
-            tower, "parent_device_name", "parentDeviceName", "basic_line_ledger_name", "line_name"
+            tower,
+            "parent_device_name", "parentDeviceName", "basic_line_ledger_name", "line_name",
+            "lineName", "线路名称",
         ),
         "major": first_present(tower, "major", "专业") or "tms",
         "workNature": first_present(tower, "work_nature", "workNature"),
@@ -115,10 +146,12 @@ def merge_tower_coverage(
         "longitude": longitude,
         "latitude": latitude,
         "dockGuid": first_present(
-            airport or {}, "dock_guid", "dockGuid", "airport_guid", "airportGuid"
+            airport or {},
+            "dock_guid", "dockGuid", "airport_guid", "airportGuid", "机场guid", "机场GUID",
         ),
         "dockName": first_present(
-            airport or {}, "dock_name", "dockName", "airport_name", "airportName"
+            airport or {},
+            "dock_name", "dockName", "airport_name", "airportName", "机场名称",
         ),
         "deviceRouteList": routes,
         **route_fields,
@@ -164,11 +197,14 @@ def nearest_airport(
     nearest: dict[str, Any] | None = None
     nearest_distance = float("inf")
     for airport in airports:
-        airport_longitude = as_float(first_present(airport, "longitude", "lng"))
-        airport_latitude = as_float(first_present(airport, "latitude", "lat"))
+        airport_longitude = as_float(first_present(airport, "longitude", "lng", "经度"))
+        airport_latitude = as_float(first_present(airport, "latitude", "lat", "纬度"))
         if airport_longitude is None or airport_latitude is None:
             continue
-        radius = as_float(first_present(airport, "inspection_radius", "inspectionRadius")) or 3000.0
+        radius = as_float(first_present(
+            airport,
+            "inspection_radius", "inspectionRadius", "巡检半径",
+        )) or 3000.0
         distance = haversine(longitude, latitude, airport_longitude, airport_latitude)
         if distance <= radius and distance < nearest_distance:
             nearest = airport

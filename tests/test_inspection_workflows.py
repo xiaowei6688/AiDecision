@@ -312,7 +312,7 @@ def test_inspection_uncovered_work_order_requires_real_resources() -> None:
     })
 
     state = result["workOrderFillState"]
-    assert result["ok"] is False
+    assert result["ok"] is True
     assert state["status"] == "NEED_MORE_INFO"
     assert state["missingFields"] == ["equipSn", "flightWorkers"]
     assert state["executePayload"] is None
